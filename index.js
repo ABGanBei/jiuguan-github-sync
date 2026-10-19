@@ -346,6 +346,13 @@ async function validateConnection(ctx) {
 // ===================== INIT =====================
 
 async function init(router) {
+    // 预览插件禁用守卫：首版仅提供离线维护 CLI（bin/reliable-sync.js），
+    // 在线 API 一律禁用，避免注册旧版 pull/force/restore 等危险写入口。
+    // 此判断必须在任何部署/扫描/路由注册之前 return/throw，确保危险路由不被注册。
+    console.error('[github-data-sync] 本版本为「离线维护 CLI 预览」，在线插件不可启用。');
+    console.error('[github-data-sync] 请使用离线维护命令（node bin/reliable-sync.js --help）进行聊天数据同步。');
+    throw new Error('预览插件不可启用：首版仅提供离线维护 CLI（bin/reliable-sync.js），在线 API 已禁用。');
+
     stRoot = path.join(__dirname, '..', '..');
     const publicRoot = path.join(stRoot, 'public');
 

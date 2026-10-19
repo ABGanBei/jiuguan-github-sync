@@ -1,6 +1,29 @@
-# GitHub Data Sync for SillyTavern
+# 酒管 GitHub 同步
 
 [中文](README.md) | English
+
+> ⚠️ **【本地离线维护 CLI 预览版】**
+>
+> 当前分支提供的是一个**本地离线维护 CLI 预览**，用于在酒管停服状态下对一对一角色聊天记录进行离线维护，
+> **不是**已经安装进真实酒管应用的插件。请勿按本文档下方的「安装」步骤把它装进真实应用。
+>
+> 本预览版只做以下事情，且范围严格受限：
+>
+> - **仅处理调用者指定的一个用户数据根下的 `chats/**/*.jsonl` 一对一角色聊天记录**，不涉及角色卡、世界书、设置等其他数据。
+>   （「一对一角色聊天」指单角色对话正文，群聊正文位于其他目录，首版不包含；不涉及多用户隔离。）
+> - **维护前必须先停止酒管服务，并关闭所有已打开的标签页**。数据文件必须处于无人读写的静止状态，
+>   否则离线维护可能读到半写状态或与运行中的进程互相覆盖。
+> - **只有 `status` 命令免离线确认**；`push`、`pull`、`apply`、`recover`、`init` 等改写或推进状态的操作都要求显式声明已离线。
+> - **`pull` 只暂存（stage），不会直接写聊天文件；只有 `apply` 才会真正写入聊天。**
+> - **冲突时保留双方内容，不自动选择**；**删除操作不会传播**（不把删除扩散到本地或远端）。
+> - 本分支上，原有的在线插件 `init` 与 `install.sh` 已被禁用；**自动同步、Termux 环境、GitHub PAT 凭据、
+>   UI 连续性、数据加密**等均**尚未验收**，手机端、真实聊天场景、以及网络 GitHub 凭据请勿在生产环境使用。
+>
+> 最新用法请参阅 [docs/reliable-sync-usage.md](docs/reliable-sync-usage.md)。
+>
+> ---
+>
+> 以下为上游仓库的历史内容，仅作为背景保留。
 
 Sync SillyTavern data to a private GitHub repository — characters, chats, worlds, settings, and more. Push manually or on a timer. Pull to restore on any device.
 

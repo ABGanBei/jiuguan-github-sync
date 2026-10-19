@@ -4,6 +4,12 @@
 
 set -e
 
+# 首版为「离线维护 CLI 预览」：禁止原危险安装流程（克隆/安装依赖/写配置），立即失败并提示使用维护 CLI。
+echo "错误：本版本为「离线维护 CLI 预览」，禁止运行原安装流程。"
+echo "请勿通过本脚本安装；聊天数据同步请使用离线维护命令："
+echo "  node bin/reliable-sync.js --help"
+exit 1
+
 ST_DIR="${1:-.}"
 
 if [ ! -f "$ST_DIR/server.js" ]; then
