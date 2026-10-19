@@ -27,17 +27,20 @@
 
 同仓库两样东西，分开装。**首装**请先 `git clone` 本仓库并 `cd` 进入仓库目录，再按下面两步执行。
 
+> 本仓库是**公开的插件源码仓库**（`github.com/ABGanBei/jiuguan-github-sync`）；聊天同步请**另建一个专用私有数据仓库**，配置里的 **Repository 不可填本源码仓库**。
+
 ### 1. 前端扩展（酒管界面）
 
-在酒管「扩展」界面用**扩展 URL** 安装方式，粘贴本仓库的 Git 地址（例如 `https://github.com/<owner>/<repo>`）。
-具体入口以你使用的酒管版本为准。这里**不提供真实仓库地址**，请替换为你实际克隆/托管的仓库 URL 占位。
+在酒管「扩展」界面用**扩展 URL** 安装方式，粘贴本仓库的 Git 地址：`https://github.com/ABGanBei/jiuguan-github-sync.git`。
+具体入口以你使用的酒管版本为准。
 
 ### 2. 服务端插件（后台）
 
 在已克隆的仓库目录内，执行一次性 Node 安装器，把插件装到酒管 `plugins/` 目录并启用服务端插件：
 
 ```bash
-git clone <本仓库地址> && cd <仓库目录>
+git clone https://github.com/ABGanBei/jiuguan-github-sync.git
+cd jiuguan-github-sync
 node bin/install-plugin.js --app-dir <酒管应用目录> --enable-server-plugins --install-deps --apply
 ```
 
@@ -52,7 +55,7 @@ node bin/install-plugin.js --app-dir <酒管应用目录> --enable-server-plugin
 
 在酒管扩展界面里配置：
 
-- **Repository**：`owner/repo`；**Branch**：`main`（或你的分支）。
+- **Repository**：`owner/repo`（指你**专门为聊天同步新建的私有数据仓库**，**不要填本公开源码仓库**）；**Branch**：`main`（或你的分支）。
 - **PAT**：粘贴个人访问令牌。令牌**只写**到独立 secrets 存储（不进 settings/日志/仓库/URL/进程参数）；前端**不回填**已保存的令牌；留空表示保留既有令牌不变。
 - 首次可勾选**初始化空分支**：只有在明确勾选时，才在空仓库 bootstrap 一次普通 push（**不 force**）。
 
@@ -103,7 +106,7 @@ node bin/install-plugin.js --app-dir <酒管应用目录> --enable-server-plugin
 - **已验收（官方隔离宿主 + 合成数据 + 本地 bare）**：官方 1.17 隔离宿主（固定提交 `e3f41666c69db032e17e079fcddcf40cf47e8593`）上，前端扩展经扩展 URL 从本地 Git fixture 安装 manifest/client；真实 Node 后端安装器 `--apply --install-deps` 启用并备份 config；真实 UI 保存合成 token 后清空不回填、CSRF 连接 bootstrap 本地 bare、push；另一端合成修改主线/分支、pull 仅暂存（磁盘未变）；UI 安排、关闭全部旧标签停服务、重启 listen 前 apply、全新标签载入主线第二候选 2/2、`/send` 追加用户消息成功保存；随后在 UI 再次 push，bare 远端文件与宿主保存字节**完全相同**，`swipes2`/`swipe_id1`/`swipe_info`/`peerNote` 均保留（证据见独立验收证据包 `host-continued-evidence.json`，由 Codex 随证据 ZIP 单独提供，**不随本源码包发布**）；真实 chat-manager 打开同步分支正文后 `/checkpoint-exit` 回主线成功（以上分支场景仅限定该合成主线/分支样本，**不代表所有分支场景均已验证**）。自动检查的定时器已用可控时钟验证退避与重启恢复。
 - **未验收**：真实用户安装、真实手机（Termux 实机）、真实 GitHub PAT、真实 GitHub bootstrap 的 HTTP 鉴权 push 均**未验收**，请勿在真实手机/生产环境使用。Termux 的支持目前仅为设计 + 合成路径测试，未实机。
 - **软件关闭 / 手机休眠**不保证定时任务运行。
-- 本仓库**不声称**已在真实数据环境部署、或真实 GitHub 已发布；各套测试通过数量以 Codex 实测证据为准，本说明不写死具体数字。
+- 本仓库**不声称**已在真实数据环境部署；**源码已公开**（`github.com/ABGanBei/jiuguan-github-sync`），但「源码发布」与「真实数据同步验收」是**不同事项**——真实聊天数据在真实 GitHub 上的端到端同步**尚未验收**。各套测试通过数量以 Codex 实测证据为准，本说明不写死具体数字。
 - 本仓库**不声称已做加密**：令牌经独立 secrets 存储与 `GIT_ASKPASS` 传递、不进日志/URL/参数，但并非加密存储。
 - Windows 凭据当前以 DACL 收紧到当前用户 / SYSTEM / Administrators（SID），无法进一步按 POSIX 语义收紧。
 

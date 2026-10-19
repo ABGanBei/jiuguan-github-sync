@@ -30,11 +30,13 @@ happens during the early window of the next startup — after you have closed ev
 Two pieces in one repo, installed separately. **For first install**, `git clone` this repo and `cd` into it first,
 then follow the two steps below.
 
+> This is a **public plugin source repository** (`github.com/ABGanBei/jiuguan-github-sync`); for chat sync, **create a
+> separate dedicated private data repository** — the **Repository field must not point at this source repo**.
+
 ### 1. Frontend extension (the in-app UI)
 
-In the JiuGuan (酒管) "Extensions" UI, install by **extension URL** and paste this repository's Git URL
-(e.g. `https://github.com/<owner>/<repo>`). The exact entry point depends on your JiuGuan (酒管) version.
-**No real repository URL is provided here** — replace it with the placeholder for the repo you actually cloned/host.
+In the JiuGuan (酒管) "Extensions" UI, install by **extension URL** and paste this repository's Git URL:
+`https://github.com/ABGanBei/jiuguan-github-sync.git`. The exact entry point depends on your JiuGuan (酒管) version.
 
 ### 2. Server plugin (backend)
 
@@ -42,7 +44,8 @@ Inside the cloned repo, run the one-shot Node installer to install the plugin in
 and enable server plugins:
 
 ```bash
-git clone <repo-url> && cd <repo-dir>
+git clone https://github.com/ABGanBei/jiuguan-github-sync.git
+cd jiuguan-github-sync
 node bin/install-plugin.js --app-dir <app-dir> --enable-server-plugins --install-deps --apply
 ```
 
@@ -60,7 +63,8 @@ node bin/install-plugin.js --app-dir <app-dir> --enable-server-plugins --install
 
 In the extension UI:
 
-- **Repository**: `owner/repo`; **Branch**: `main` (or yours).
+- **Repository**: `owner/repo` (the **dedicated private data repository you create for chat sync** — **do not point it at
+  this public source repo**); **Branch**: `main` (or yours).
 - **PAT**: paste a personal access token. The token is **written only** to an isolated secrets store (never to
   settings/logs/repo/URL/process args); the frontend **never re-fills** a saved token; leaving it blank keeps the
   existing token unchanged.
@@ -141,7 +145,9 @@ false success or permanently blocking the whole host).
   HTTP-auth push are all **not verified** — do not use in production. Termux support is currently design + synthetic path
   tests only, not on a real device.
 - **App closed / phone asleep** does not guarantee timers run.
-- This repo does **not** claim to be deployed against real data or published to real GitHub; per-suite pass counts are not
+- This repo does **not** claim to be deployed against real data; the **source is public**
+  (`github.com/ABGanBei/jiuguan-github-sync`), but "source published" and "real-data sync verified" are **different
+  things** — end-to-end sync of real chat data on real GitHub is **not yet verified**. Per-suite pass counts are not
   hard-coded here — they come from Codex's measured evidence.
 - This repo does **not** claim encryption: tokens are kept in an isolated secrets store and passed via `GIT_ASKPASS`
   (never in logs/URL/args), but they are not stored encrypted.

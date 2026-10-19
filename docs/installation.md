@@ -3,13 +3,13 @@
 本文档说明如何把本仓库安装为酒管宿主的**服务端插件**（以及可选的前端扩展）。
 
 > 范围：**一对一角色聊天**的 GitHub 同步（群聊正文位于其他目录，首版不包含）。
-> 本分支为「1.3.0-preview.1 界面集成预览」。已在**官方 1.17 隔离宿主 + 合成数据 + 本地 bare** 上完成验收（扩展 URL 安装、后端安装器 `--apply --install-deps`、UI 保存 token 清空不回填、连接/推送、另一端合成修改、拉取只暂存、安排并重启 apply、续聊保存、续聊后再次 push（bare 远端与宿主字节完全相同、`swipes2`/`swipe_id1`/`swipe_info`/`peerNote` 保留）、chat-manager 打开同步分支正文后 `/checkpoint-exit` 回主线等；分支场景仅限定该合成主线/分支样本）；但**真实用户安装、真实手机（Termux 实机）、真实 GitHub PAT、真实 GitHub bootstrap 的 HTTP 鉴权 push、加密均未验收**。本仓库**不声称**已在本机真实数据部署、或真实 GitHub 已发布。
+> 本分支为「1.3.0-preview.1 界面集成预览」。已在**官方 1.17 隔离宿主 + 合成数据 + 本地 bare** 上完成验收（扩展 URL 安装、后端安装器 `--apply --install-deps`、UI 保存 token 清空不回填、连接/推送、另一端合成修改、拉取只暂存、安排并重启 apply、续聊保存、续聊后再次 push（bare 远端与宿主字节完全相同、`swipes2`/`swipe_id1`/`swipe_info`/`peerNote` 保留）、chat-manager 打开同步分支正文后 `/checkpoint-exit` 回主线等；分支场景仅限定该合成主线/分支样本）；但**真实用户安装、真实手机（Termux 实机）、真实 GitHub PAT、真实 GitHub bootstrap 的 HTTP 鉴权 push、加密均未验收**。本仓库**不声称**已在本机真实数据部署；源码已公开（`github.com/ABGanBei/jiuguan-github-sync`），但「源码发布」与「真实数据同步验收」是**不同事项**，真实聊天数据在真实 GitHub 上的端到端同步尚未验收。
 
 ## 一、两种安装方式
 
 酒管插件分两部分，分别安装：
 
-1. **前端扩展**（根 `manifest.json`，js=`client/index.js`、css=`client/style.css`）：可在酒管「扩展」设置里**粘贴仓库 URL** 安装，或手动复制到前端扩展目录。前端安装器**不会**自动 `npm install` 或安装服务端。
+1. **前端扩展**（根 `manifest.json`，js=`client/index.js`、css=`client/style.css`）：可在酒管「扩展」设置里**粘贴仓库 URL**（`https://github.com/ABGanBei/jiuguan-github-sync.git`）安装，或手动复制到前端扩展目录。前端安装器**不会**自动 `npm install` 或安装服务端。
 2. **服务端插件**（`package.json` 的 `main`= `index.js`）：需要执行一次后端安装脚本，见下文。
 
 ## 二、后端一次性安装脚本（Windows / Termux 通用）
@@ -21,7 +21,8 @@
 首装请先 `git clone` 本仓库并 `cd` 进入仓库目录，再执行安装器：
 
 ```bash
-git clone <本仓库地址> && cd <仓库目录>
+git clone https://github.com/ABGanBei/jiuguan-github-sync.git
+cd jiuguan-github-sync
 
 # Windows PowerShell / Termux 通用（Node >= 20）
 node bin/install-plugin.js --app-dir <酒管应用目录> [--enable-server-plugins] [--install-deps] [--apply]
@@ -55,7 +56,7 @@ bash install.sh --app-dir /path/to/app [--enable-server-plugins] [--install-deps
 
 1. 关闭所有旧客户端标签页。
 2. **重启酒管**，并在浏览器重新打开页面（旧标签页内存未清，不能无感在线原位应用）。
-3. 在扩展设置里配置仓库 owner/repo、branch 与 PAT（PAT 只写后保存即清空，不入配置/日志/URL/进程参数）。
+3. 在扩展设置里配置仓库 owner/repo、branch 与 PAT（PAT 只写后保存即清空，不入配置/日志/URL/进程参数）。**本仓库是公开源码仓库，聊天同步请另建专用私有数据仓库，Repository 不可填本源码仓库。**
 
 ### 隐私说明（使用前必读）
 
@@ -74,12 +75,10 @@ bash install.sh --app-dir /path/to/app [--enable-server-plugins] [--install-deps
 
 ## 三、前端扩展 manifest（可粘贴仓库 URL）
 
-根 `manifest.json` 为前端扩展声明（js=`client/index.js`、css=`client/style.css`）。上传 GitHub 源码后，可用实际仓库 URL 在酒管扩展页粘贴安装。
-
-> 说明：本文档不创建任何真实 GitHub 仓库；下面的 URL 仅为占位，需在上传源码后替换为实际地址。
+根 `manifest.json` 为前端扩展声明（js=`client/index.js`、css=`client/style.css`）。源码已公开于 `github.com/ABGanBei/jiuguan-github-sync`，可用实际仓库 URL 在酒管扩展页粘贴安装：
 
 ```
-（占位）https://github.com/<owner>/<repo>
+https://github.com/ABGanBei/jiuguan-github-sync.git
 ```
 
 ## 四、已知边界
