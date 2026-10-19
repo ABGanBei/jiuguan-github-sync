@@ -1,8 +1,8 @@
 {
-    "display_name": "酒管 GitHub 同步",
-    "version": "1.3.0-preview.1",
-    "description": "界面集成预览：一对一角色聊天的 GitHub 同步前端。下载仅暂存，应用须重启酒管服务后重新打开页面。",
-    "author": "JOJO666888888",
-    "js": "index.js",
-    "css": "style.css"
+  "display_name": "酒管 GitHub 同步",
+  "version": "1.4.0-preview.1",
+  "description": "界面集成预览：一对一角色聊天的 GitHub 同步前端。下载仅暂存，应用须重启酒管服务后重新打开页面。",
+  "author": "JOJO666888888",
+  "js": "index.js",
+  "css": "style.css"
 }

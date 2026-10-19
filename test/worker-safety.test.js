@@ -304,7 +304,9 @@ async function childMain() {
                 op: 'connect', repoDir, branch, remoteUrl: githubUrl, tokenFile,
                 insteadOf: { [githubUrl]: bareUrl }, initializeEmptyBranch: false,
             }, { timeoutMs: 60000 });
-            assert.strictEqual(r.connected, true, 'runConnect 应正常完成（作用 target，非 victim）');
+            assert.strictEqual(r.connected, false, '空仓库尚未引导时不得报告已就绪');
+            assert.strictEqual(r.needsRemoteInit, true, '只探测 target 空分支并请求显式初始化');
+            assert.strictEqual(r.remoteEmpty, true, '本地 bare 应识别为空仓库');
         } finally {
             for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
         }

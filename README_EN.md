@@ -2,160 +2,85 @@
 
 [中文](README.md) | English
 
-> This repository ships **two components in one repo**: a frontend extension (the in-app UI) and a server plugin
-> (backend Git and file I/O). Install them into the JiuGuan (酒管) host **separately**. This is the
-> **1.3.0-preview.1 UI-integration preview**: it syncs **one-on-one character chat bodies only** and does
-> **no in-place online apply**. Read this fully, plus [docs/integration-contract.md](docs/integration-contract.md),
-> before using it for real.
+Start with the [Chinese quick-start guide](docs/quickstart.md).
 
----
+**1.4 unified setup wizard:** back up the current user's saved one-on-one character chat bodies to a dedicated private GitHub repository. On another device, check and stage updates, close all clients, then manually restart the service to apply them.
 
-## What this is
+## Requirements and scope
 
-This sync backs up **one-on-one character chat bodies** to your private GitHub repository and lets you retrieve them
-safely across devices. It is **not** live overwriting sync: a pull only **stages** changes locally, and the real write
-happens during the early window of the next startup — after you have closed every other client and tab.
+- 酒管 **1.17.x**, **Node.js 20+**, npm, and Git. Back up and upgrade older 酒管 versions yourself; this installer does not upgrade the app.
+- Only `chats/**/*.jsonl` one-on-one chat bodies are synced. Character cards, world books, group chats, attachments, and settings are excluded. Both devices need the same character cards, including matching actual card filenames.
+- Upload covers all saved one-on-one chats for the current user. Checking updates only stages them. There is no online overwrite, force push, or deletion propagation.
+- Conflicts preserve both copies for manual resolution. This version has no chat encryption or Git history cleanup.
 
-**First-release limits (please understand)**:
+## Install or upgrade
 
-- **One-on-one character chat bodies only** (`chats/**/*.jsonl`). Characters, worlds, group-chat bodies, knowledge,
-  settings, etc. are **not synced**; both ends must have the **same characters** configured or chats won't line up.
-- **No online apply**: there is no "download overwrites my chat now" button; download only stages.
-- **No force push / force pull**: remote or local history is never force-overwritten.
-- **Deletes do not propagate**: deleting a chat on one side does not spread to the other.
-- **Conflicts keep both sides**: nothing is auto-picked; both copies are kept for you to resolve manually.
+Download and extract this version from [the source repository](https://github.com/ABGanBei/jiuguan-github-sync), or clone it into a new directory. Close every 酒管 page and client and stop the service, then:
 
-## Installation (two components)
+- **Windows: double-click `install.cmd`.**
+- **Termux: run `bash setup.sh` from the source directory.**
 
-Two pieces in one repo, installed separately. **For first install**, `git clone` this repo and `cd` into it first,
-then follow the two steps below.
+Select the app directory, review the plan, and confirm. The wizard installs both frontend and backend, installs dependencies, and enables server plugins. Start the service yourself and open a fresh page afterward. Separate component installation is no longer required. Termux has not been verified on a real phone.
 
-> This is a **public plugin source repository** (`github.com/ABGanBei/jiuguan-github-sync`); for chat sync, **create a
-> separate dedicated private data repository** — the **Repository field must not point at this source repo**.
+Recognized older releases are backed up before upgrading. The same version with matching contents needs no reinstall. Unknown, modified, or untracked old targets are rejected by default; explicit `--takeover` allows takeover only after a full backup. A same-name user-level extension overrides the shared extension; resolve that copy when the wizard reports it.
 
-### 1. Frontend extension (the in-app UI)
+The CLI uses the same wizard. Interactive mode shows a plan before confirmation; an actual noninteractive install requires both `--apply` and `--stopped-confirmed`:
 
-In the JiuGuan (酒管) "Extensions" UI, install by **extension URL** and paste this repository's Git URL:
-`https://github.com/ABGanBei/jiuguan-github-sync.git`. The exact entry point depends on your JiuGuan (酒管) version.
-
-### 2. Server plugin (backend)
-
-Inside the cloned repo, run the one-shot Node installer to install the plugin into the host's `plugins/` directory
-and enable server plugins:
-
-```bash
-git clone https://github.com/ABGanBei/jiuguan-github-sync.git
-cd jiuguan-github-sync
-node bin/install-plugin.js --app-dir <app-dir> --enable-server-plugins --install-deps --apply
+```text
+node bin/setup.js --app-dir "APP_DIRECTORY"
+node bin/setup.js --app-dir "APP_DIRECTORY" --config "ACTIVE_CONFIG_PATH" --data-root "ACTIVE_DATA_ROOT" --apply --stopped-confirmed
 ```
 
-- It **defaults to dry-run**: without `--apply` it only prints the exact source/target/config plan and writes nothing.
-  Actual installation requires explicit `--apply`; review the plan **without `--apply` first**, then run with it.
-- `--enable-server-plugins` flips `config.yaml`'s `enableServerPlugins` from `false` to `true` (idempotent).
-- `--install-deps` runs `npm ci --omit=dev` inside the new plugin directory.
-- Runs under Windows PowerShell; Termux support is **design + synthetic path tests only** and is **not yet
-  verified on a real phone** (the installer is pure Node — see "Verification status").
+`--stopped-confirmed` is your declaration that every client is closed and the service is stopped. The wizard does not stop or restart the service automatically. Noninteractive installation requires an explicit data root; `--no-data-root` explicitly skips the shadow-extension check. Recovery or rollback with an external config also requires `--config "ORIGINAL_CONFIG_PATH"`.
 
-> After installing, **close all old tabs → stop the JiuGuan (酒管) service → restart it → reopen a fresh page**, so the
-> new frontend extension and backend plugin load correctly.
+For an interrupted installation, retain `<app-directory>/.jiuguan-install/`. Check status, then choose recovery or rollback as appropriate:
 
-### 3. Configure
+```text
+node bin/setup.js --status --app-dir "APP_DIRECTORY"
+node bin/setup.js --recover --app-dir "APP_DIRECTORY" --stopped-confirmed
+node bin/setup.js --rollback --app-dir "APP_DIRECTORY" --stopped-confirmed
+```
 
-In the extension UI:
+Recovery and rollback require the service to be stopped. Add `--to <backupId>` to select a rollback backup. Past backups are retained; the newer installation is moved to quarantine on rollback. See `node bin/setup.js --help` for more options.
 
-- **Repository**: `owner/repo` (the **dedicated private data repository you create for chat sync** — **do not point it at
-  this public source repo**); **Branch**: `main` (or yours).
-- **PAT**: paste a personal access token. The token is **written only** to an isolated secrets store (never to
-  settings/logs/repo/URL/process args); the frontend **never re-fills** a saved token; leaving it blank keeps the
-  existing token unchanged.
-- First-time: you may check **initialize empty branch** — only when explicitly checked does it bootstrap an empty
-  repository with one normal push (**no force**).
+## First-time configuration
 
-### Privacy (read before using)
+1. Create a **dedicated Private data repository** on [GitHub](https://github.com/new), without a README, `.gitignore`, or License.
+2. Create a [fine-grained PAT](https://github.com/settings/personal-access-tokens/new). Choose **Only select repositories**, select **only that data repository**, and grant **Contents: Read and write**. Keep Metadata at its default read-only permission; no other permissions are needed.
+3. Enter `owner/repo`, branch (default `main`), and the token in the panel, then click **保存并验证 (Save and verify)**. Both devices must use the same repository and branch, with an authorized token entered on each device.
+4. If the branch is missing, review the target and confirm initialization separately. This makes one ordinary push containing no chats, without force-overwriting.
+5. Review verification results, then upload or check updates.
 
-- **Use a dedicated private data repository**; do not sync chats into any other code/doc repo.
-- **Use a fine-grained PAT** and grant **only this repository's `Contents` read/write** (`Metadata` is implicitly
-  read-only on GitHub — no extra grant needed). You do **not** need organization/account or other-repo scopes, and you
-  should **not** use a classic full-repo-scope token.
-- Confirm the repository is **not protected by a ruleset** that blocks ordinary push (otherwise pushes are rejected).
-- **Private-repo access control ≠ end-to-end encryption**: chats enter Git history in **plaintext**; deleting a file
-  does **not** delete its content from older commits.
-- This version has **no encryption, no history cleanup, and no old-version GUI recovery**; if you need strong privacy
-  or encryption, do not sync real data yet.
+**This public source repository must not be used for chats.** Private-repository and read verification confirm repository privacy and read access. Write access is confirmed only by a **successful real initialization or upload**. Permission settings and a successful read do not prove a push will succeed; branch protection or other rules may reject it.
 
-## UI actions
+The token field clears after saving and is never refilled. A blank field keeps the saved token. Repository and branch become locked once sync state exists; you can replace the token and verify again.
 
-| Action | Meaning |
-|--------|---------|
-| Save | Writes repo/branch/auto-check settings and PAT (PAT written only to isolated secrets, never re-filled, blank keeps it) |
-| Connect | Tests repo and token; optionally "initialize empty branch" |
-| Upload saved chats | Pushes already-saved on-disk chats to the remote |
-| Check download | Pulls from remote and **only stages**, never writes chats |
-| Schedule restart-apply | Binds the current stage + target identity/digest, scheduled to apply at next startup; requires **closing all clients and reopening after restart** |
-| Cancel schedule | Clears only the schedule, never deletes staged backups |
+## Daily use
 
-**Auto-check** is **off** by default; when on, it only periodically `pull`s and stages — it **never auto-applies**.
-Timers are not guaranteed to run while the app is closed or the phone is asleep.
+| Main action | Result |
+| --- | --- |
+| **上传已保存聊天 (Upload saved chats)** | Wait for generation and saving to finish, then upload saved on-disk chats. |
+| **检查更新 (Check updates)** | Download and stage remote changes without rewriting active chats. |
 
-## Actually applying chats (at restart)
+When changing devices: upload successfully on the old device → check updates on the new one → review the staged list and pass **检查待更新项 (Check pending updates)** → close other clients and check the confirmation → **安排应用（重启后） (Schedule apply after restart)** → close the current page → **manually stop and restart the 酒管 service** → open a fresh page and confirm application status before continuing.
 
-The early startup window is the only safe time to write chats, so a scheduled apply is never "invisible in-place overwrite":
+Preflight reflects the moment it runs; scheduling and startup validate again. A successful schedule does not mean chats have been applied. Refreshing a page does not restart the service. An upload result saying “remote update candidates, not downloaded” is not a persisted stage; use Check updates first.
 
-1. In the UI, click **Schedule restart-apply**, confirming you will **close all other clients and old tabs** before restarting.
-2. **Stop the JiuGuan (酒管) service.**
-3. Start JiuGuan (酒管) again; within the official 1.17 `loadPlugins` await window, before `listen`, the plugin verifies the
-   same stage/identity/digest and then writes.
-4. Reopen the browser tab.
+Auto-check is off by default and appears in folded settings. When enabled, it only checks and stages periodically. It does not upload, overwrite online, or apply automatically, and preserves an already scheduled stage. Timers are not guaranteed while the service is off or the phone is asleep. The panel shows recent check, upload, and application records.
 
-If verification fails (stage/identity mismatch, chat already changed, etc.), the plugin keeps the original intent and
-baseline and never rewrites the expectation from current content; a partial write blocks the host from continuing to
-start, avoiding a half-written state.
+## Data and credentials
 
-**Receipt narrow-window limit**: in the crash window after apply has completed (stage/active cleared) but before the
-receipt is persisted, the chat data has actually been written, yet on the next startup the plugin **cannot confirm**
-that apply finished — it keeps the schedule and reports "cannot confirm, may cancel in the UI", and it **never guesses
-success from historical complete records**. This is an intentional product limit (prefer manual confirmation over a
-false success or permanently blocking the whole host).
+- Chats enter private-repository Git history in plaintext. Deleting current files does not remove old commits. Private access control does not provide end-to-end encryption.
+- PATs use isolated secrets storage and `GIT_ASKPASS`, and do not enter ordinary configuration, logs, repositories, URLs, or process arguments. Token storage itself is not encrypted.
+- Windows credential DACLs allow the current user, SYSTEM, and Administrators. Users have separate configuration, repositories, and locks.
+- Application validates staged identity, contents, and local state, and backs up before writing. Conflicts or validation failures preserve data and block the operation. If a crash leaves no matching execution receipt, the schedule remains with an “unable to confirm” message; old history is not treated as proof of success.
 
-## Security bounds
+## Verification limits
 
-- Credentials go through `GIT_ASKPASS`; the PAT never enters config, settings, logs, the repo, URLs, or process args;
-  on Windows it is tightened via a DACL to **current user / SYSTEM / Administrators** (and inherited + other explicit
-  wide-read ACEs are removed) — not "current user only".
-- Git/core run in a dedicated worker that clears inherited token/GIT config/askpass/SSH variables and disables
-  interactivity; storage paths reject symlinks/junctions/escaping.
-- Per-user config, repo, and lock.
+Verification includes installation, UI operations, staging, startup application, and continued chat saving in an official isolated 1.17 instance with synthetic chats and a local bare repository. Automated checks also cover installation transactions and frontend/backend safety gates. Evidence is provided with the relevant verification records.
 
-## Verification status
-
-- **Verified (official isolated host + synthetic data + local bare)**: on the official 1.17 isolated host (pinned commit
-  `e3f41666c69db032e17e079fcddcf40cf47e8593`), the frontend extension installed its manifest/client over an extension URL
-  from a local Git fixture; the real Node backend installer `--apply --install-deps` enabled and backed up config; the real
-  UI saved a synthetic token then cleared without re-fill, CSRF-connected and bootstrapped a local bare, and pushed; on the
-  other end synthetic main/branch edits were made, pull only staged (disk unchanged); UI scheduled, closed all old tabs,
-  stopped the service, applied before `listen` on restart, a fresh tab loaded the mainline second candidate 2/2, and `/send`
-  appended a user message successfully; a subsequent UI push made the bare remote file **byte-identical** to the host's
-  saved bytes, with `swipes2`/`swipe_id1`/`swipe_info`/`peerNote` all preserved (evidence in the separate verification
-  evidence package `host-continued-evidence.json`, provided by Codex as an evidence ZIP — **not shipped with this source
-  package**); a real chat-manager opened the sync-branch body and `/checkpoint-exit` back to
-  the mainline succeeded (these branch scenarios are scoped to that synthetic main/branch sample only — **not** a claim
-  that every branch scenario is verified). The auto-check timer's backoff and restart-recovery have been verified with a
-  controllable clock.
-- **Not verified**: real-user install, a real phone (Termux on-device), a real GitHub PAT, and the real GitHub bootstrap
-  HTTP-auth push are all **not verified** — do not use in production. Termux support is currently design + synthetic path
-  tests only, not on a real device.
-- **App closed / phone asleep** does not guarantee timers run.
-- This repo does **not** claim to be deployed against real data; the **source is public**
-  (`github.com/ABGanBei/jiuguan-github-sync`), but "source published" and "real-data sync verified" are **different
-  things** — end-to-end sync of real chat data on real GitHub is **not yet verified**. Per-suite pass counts are not
-  hard-coded here — they come from Codex's measured evidence.
-- This repo does **not** claim encryption: tokens are kept in an isolated secrets store and passed via `GIT_ASKPASS`
-  (never in logs/URL/args), but they are not stored encrypted.
-- Windows credentials are tightened via a DACL to current user / SYSTEM / Administrators (SID); no stricter POSIX-style
-  semantics apply.
+**Real-user installation, Termux on a real phone, real GitHub PATs, real GitHub initialization over authenticated push, and end-to-end syncing of real chats remain unverified.** This documentation does not claim automatic service restart or deployment against real data. Back up first and rehearse in a separate test instance.
 
 ## Source
 
-Based on [JOJO666888888/sillytavern-github-sync](https://github.com/JOJO666888888/sillytavern-github-sync)
-(MIT License, author retained). This repo adds a "reliable sync core" and a "1.17 UI integration" on top; the original
-body is retained here only as source and MIT attribution.
+Based on [the original project by JOJO666888888](https://github.com/JOJO666888888/sillytavern-github-sync) (MIT License, original author retained). This repository adds a reliable sync core, the 酒管 UI integration, and the unified setup wizard.

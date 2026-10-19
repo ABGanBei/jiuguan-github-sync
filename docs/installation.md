@@ -1,91 +1,63 @@
-# 酒管同步 · 安装说明（1.3.0-preview.1 界面集成预览）
+# 酒管同步安装与恢复（1.4.0-preview.1）
 
-本文档说明如何把本仓库安装为酒管宿主的**服务端插件**（以及可选的前端扩展）。
+第一次使用请看[简明使用说明](quickstart.md)。本页说明安装边界和故障恢复。
 
-> 范围：**一对一角色聊天**的 GitHub 同步（群聊正文位于其他目录，首版不包含）。
-> 本分支为「1.3.0-preview.1 界面集成预览」。已在**官方 1.17 隔离宿主 + 合成数据 + 本地 bare** 上完成验收（扩展 URL 安装、后端安装器 `--apply --install-deps`、UI 保存 token 清空不回填、连接/推送、另一端合成修改、拉取只暂存、安排并重启 apply、续聊保存、续聊后再次 push（bare 远端与宿主字节完全相同、`swipes2`/`swipe_id1`/`swipe_info`/`peerNote` 保留）、chat-manager 打开同步分支正文后 `/checkpoint-exit` 回主线等；分支场景仅限定该合成主线/分支样本）；但**真实用户安装、真实手机（Termux 实机）、真实 GitHub PAT、真实 GitHub bootstrap 的 HTTP 鉴权 push、加密均未验收**。本仓库**不声称**已在本机真实数据部署；源码已公开（`github.com/ABGanBei/jiuguan-github-sync`），但「源码发布」与「真实数据同步验收」是**不同事项**，真实聊天数据在真实 GitHub 上的端到端同步尚未验收。
+## 统一安装
 
-## 一、两种安装方式
+需要酒管 **1.17.x、Node.js 20+、npm 和 Git**。向导检查这些工具，不自动升级酒管或安装系统工具。
 
-酒管插件分两部分，分别安装：
+下载本版源码 ZIP 并解压。Windows 双击 `install.cmd`；Termux 在解压目录运行 `bash setup.sh`。两者进入同一个 Node 向导：选择宿主、核对配置路径、查看计划、确认已经关闭全部客户端并停止服务，然后安装。
 
-1. **前端扩展**（根 `manifest.json`，js=`client/index.js`、css=`client/style.css`）：可在酒管「扩展」设置里**粘贴仓库 URL**（`https://github.com/ABGanBei/jiuguan-github-sync.git`）安装，或手动复制到前端扩展目录。前端安装器**不会**自动 `npm install` 或安装服务端。
-2. **服务端插件**（`package.json` 的 `main`= `index.js`）：需要执行一次后端安装脚本，见下文。
+一次安装以下两处，同一发行包一起升级：
 
-## 二、后端一次性安装脚本（Windows / Termux 通用）
-
-脚本入口是 Node 脚本 `bin/install-plugin.js`，`install.sh` 只是它的薄封装（正确引号转发参数）。
-
-### 基本用法
-
-首装请先 `git clone` 本仓库并 `cd` 进入仓库目录，再执行安装器：
-
-```bash
-git clone https://github.com/ABGanBei/jiuguan-github-sync.git
-cd jiuguan-github-sync
-
-# Windows PowerShell / Termux 通用（Node >= 20）
-node bin/install-plugin.js --app-dir <酒管应用目录> [--enable-server-plugins] [--install-deps] [--apply]
-```
-
-或通过薄封装（POSIX shell）：
-
-```bash
-bash install.sh --app-dir /path/to/app [--enable-server-plugins] [--install-deps] [--apply]
-```
-
-### 选项
-
-| 选项 | 说明 |
+| 组件 | 固定安装位置 |
 | --- | --- |
-| `--app-dir <路径>` | 酒管应用根目录（必须含 `server.js` 与 `package.json`）。 |
-| `--enable-server-plugins` | 将 `config.yaml` 顶层 `enableServerPlugins` 由 `false` 改为 `true`（幂等）。 |
-| `--install-deps` | 在新插件目录内执行 `npm ci --omit=dev` 安装依赖。 |
-| `--apply` | 真正写文件；**默认是 dry-run**，只打印计划、不写任何文件。实际安装必须显式加 `--apply`。 |
+| 前端 | `<app>/public/scripts/extensions/third-party/jiuguan-github-sync` |
+| 后端 | `<app>/plugins/jiuguan-github-sync` |
+| 事务、备份和隔离目录 | `<app>/.jiuguan-install/`，位于插件扫描目录之外 |
 
-### 行为要点
+安装后的目录不含 `.git`。升级请下载新版并重跑统一向导。官方前端的更新按钮无法完成后端升级。
 
-- **默认 dry-run**：列出确切的 source / target / config 计划，不写任何文件；必须显式 `--apply` 才落盘。
-- **源复制**：源目录 = 本仓库根，复制到 `<app>/plugins/jiuguan-github-sync`，排除 `.git`、`node_modules`、`test-artifacts`、`research`、`outputs` 及令牌文件（任何 basename 以 `token`/`pat` 开头、`.env*`、`credentials*` 等）。
-- **不覆盖**：目标目录 `jiuguan-github-sync` 已存在即明确报错（更新属另一阶段，本安装器不做递归覆盖）。
-- **安全校验**：源目录本身非 symlink 且其祖先真实无链接；目标祖先（盘根 → `app` → `app/plugins`）无 junction/symlink；`app` 的 `server.js` / `package.json` 必须存在；目标必须落在 `app/plugins` 内（不靠目录名含英文判断）；`plugins` 父目录缺失时安全逐段创建（每段创建前校验父链真实非链接）。
-- **config.yaml**：仅严格处理**单行顶层裸键** `enableServerPlugins: false → true`；已 `true` 幂等；缺 key / 重复键 / **加引号键名（`"enableServerPlugins"` / `'enableServerPlugins'`）** / mapping 复杂形式 / 非顶层缩进 / 复杂值 / 混合注释同名一律拒绝，不重写整个 yaml。**配置预检在复制之前完成**，任何配置问题都在写任何文件前即报错（不留半份 target）。改写前先 `copy` 备份到唯一文件名（`config.yaml.bak-<时间戳>`），再用临时文件 + rename 原子替换。**只有加 `--enable-server-plugins` 才改 config.yaml。**
-- **依赖安装**：只在显式 `--install-deps` 时执行 `npm ci --omit=dev`。Windows 上通过 `node <npm-cli.js>` 安全执行（先定位可信的 `npm-cli.js`，用 `process.execPath` 直接运行，**不** spawn `npm.cmd`、不拼接 shell 字符串、无用户文本注入）。定位覆盖：npm 注入的 `npm_execpath`、node 同目录 `node_modules/npm/bin/npm-cli.js`、Windows 全局前缀，以及 **Termux 常见布局** `$PREFIX/lib/node_modules/npm/bin/npm-cli.js`（node 位于 `$PREFIX/bin/node`）。**执行顺序为「复制 → 依赖 → 启用配置」**：依赖失败时保留新 target 但 config.yaml 原字节不变，脚本会准确输出插件路径与**手工恢复指引**（进入保留目录用 `node <npm-cli.js> ci --omit=dev` 装依赖，再在宿主停止时手工改 config.yaml 并备份；本脚本**不会**升级或递归删除该保留目标，也不建议“重跑本脚本”——target 已存在会报 `TARGET_EXISTS`）。若原 config.yaml 已为 `true`，会明确提示「原字节保留但可能仍已启用，依赖完成前不要启动宿主」。不加该 flag 时，脚本会提示你自行在插件目录执行 `npm ci`。
+根 `manifest.json` 仍兼容粘贴仓库 URL 安装前端；这条路径仅安装前端。完整使用请运行统一安装器。每用户扩展可能遮蔽共享扩展，发现同名旧扩展时先备份，再卸载或移到 `extensions` 扫描目录之外；仅停用仍会阻断安装。
 
-### 安装后
+## 明确指定路径
 
-1. 关闭所有旧客户端标签页。
-2. **重启酒管**，并在浏览器重新打开页面（旧标签页内存未清，不能无感在线原位应用）。
-3. 在扩展设置里配置仓库 owner/repo、branch 与 PAT（PAT 只写后保存即清空，不入配置/日志/URL/进程参数）。**本仓库是公开源码仓库，聊天同步请另建专用私有数据仓库，Repository 不可填本源码仓库。**
+高级或非交互使用：
 
-### 隐私说明（使用前必读）
-
-- **使用专门的私有数据仓库**；不要把聊天同步进其他代码/文档仓库。
-- **令牌用 fine-grained PAT（细粒度令牌）**，只勾选该仓库的 `Contents` 读/写即可（`Metadata` 由 GitHub 隐式只读）。**不需要**组织/账户/其它仓库权限，也**不要**用 classic 全仓库权限令牌。
-- 确认该仓库**没有 ruleset 保护**阻止普通 push。
-- **私有仓库访问控制 ≠ 端到端加密**：聊天以**明文**进入 Git 历史；删除文件不会删除旧 commit 里的内容；本版本**未加密、未做历史清理、无旧版 GUI 恢复**，有强隐私需求请先不要同步真实数据。
-
-### 日常使用流程（一次后端安装 + 前端 URL 安装之后）
-
-- **上传已保存聊天**：在扩展界面点「上传已保存聊天」，把磁盘上已保存的一对一聊天正文推到远端（push）。
-- **检查下载只暂存**：点「检查下载」只把远端内容**暂存（stage）**到本地，**不立即改写聊天**（无在线原位 apply）。
-- **安排重启应用**：点「安排重启应用」绑定当前 stage 与目标身份/摘要，随后**关闭所有客户端标签页 → 重启酒管 → 重新打开页面**，插件才会在启动早期窗口真正应用暂存内容。
-
-> 上述「前端 URL 安装 + 一次后端安装 + 日常上传/下载暂存 → 关所有标签 → 重启 apply」是完整闭环；任一步省略都不会产生“无感在线覆盖”。
-
-## 三、前端扩展 manifest（可粘贴仓库 URL）
-
-根 `manifest.json` 为前端扩展声明（js=`client/index.js`、css=`client/style.css`）。源码已公开于 `github.com/ABGanBei/jiuguan-github-sync`，可用实际仓库 URL 在酒管扩展页粘贴安装：
-
-```
-https://github.com/ABGanBei/jiuguan-github-sync.git
+```text
+node bin/setup.js --app-dir "绝对宿主目录" --config "实际生效的config.yaml绝对路径" --data-root "实际用户数据根目录" --apply --stopped-confirmed
 ```
 
-## 四、已知边界
+`--config` 与 `--data-root` 要与原来的启动方式一致；命令行、环境变量或全局配置可能改变默认位置。安装器不执行宿主配置解析代码，也不能凭路径猜测哪份配置生效。多候选目录由用户选择。
 
-- 本目录（Windows）测试结果不等于 Android/Termux 或真实酒管应用；真实环境未接入验收。Termux 的支持目前仅为**设计 + 合成路径测试**（如 `$PREFIX/lib/node_modules/npm/bin/npm-cli.js` 定位），**未实机**。
-- 前端安装器不能自动 npm / 安装服务端；服务端必须跑一次本安装脚本。
-- 仅一对一角色聊天；群聊正文首版不包含；角色需两端同名配置，删除不传播。
-- **真实 GitHub bootstrap 的 HTTP 鉴权 push 尚未实测**：本地 bare 仓库功能与「HTTP fetch 合成鉴权」分别验证，尚未在真实 GitHub 端到端打通。真实 GitHub PAT、真实手机（Termux 实机）均未验收。
-- 本仓库**不声称已做加密**：令牌经独立 secrets 存储与 `GIT_ASKPASS` 传递、不进日志/URL/参数，但并非加密存储。
-- **收据（receipt）窄窗口限制**：应用已完成（stage/active 已清）但落盘收据前崩溃的窗口内，下次启动会保留安排并提示「无法确认，可在 UI 取消」，**不从历史 complete 记录猜测成功**（有意保留的产品限制）。
+配置只处理顶层单行 `enableServerPlugins` 布尔值，不整体重写 YAML。格式不明确时停止。修改前保留原字节，配置在计划后发生变化则拒绝继续。依赖安装在暂存目录内运行 `npm ci --omit=dev`，失败不能冒充安装成功。
+
+`--takeover` 用于明确接管没有本安装器清单的旧安装，先完整保留旧目录。默认拒绝未知来源、单侧安装、用户改动和版本不一致；不要直接删除目录绕过校验。`--no-deps` 仅限已有依赖可验证的场景，普通用户保持默认。
+
+## 恢复与回滚
+
+所有恢复操作都需要先关闭全部客户端、停止服务。保留源包和 `.jiuguan-install`。先查看状态，再按结果选择一项操作：
+
+```text
+node bin/setup.js --status --app-dir "绝对宿主目录"
+node bin/setup.js --recover --app-dir "绝对宿主目录" --stopped-confirmed
+node bin/setup.js --rollback --app-dir "绝对宿主目录" --stopped-confirmed
+```
+
+恢复会核对事务内容；无法确认安全时保留现场并停止。回滚保留被替换的新版和旧备份，不自动清理历次备份。用户后来改过的配置不能静默覆盖。安装器不会替用户杀进程或重启服务；停服确认由用户提供，未进行进程级停服证明。
+
+原先使用外置配置时，恢复和回滚命令还需加 `--config "原来的实际config.yaml绝对路径"`。安装器核对路径摘要与内容，只接受这次明确指定的外置路径。
+
+## 配置与日常使用
+
+使用专用 GitHub **私有数据仓库**，不要填写本公开代码仓库。细粒度令牌仅选择数据仓库，Contents 读写、Metadata 默认只读。令牌保存到独立秘密文件，POSIX 目录/文件权限为 0700/0600，Windows 收紧 DACL；不放浏览器设置、普通配置、Git URL 或命令参数。
+
+首次「保存并验证」验证仓库身份和私有性并读取分支。缺分支时需另行确认初始化；普通推送不含聊天的提交，不强制覆盖。读取成功不证明写入权限，分支保护也可能阻止写入。只有实际初始化或上传成功才记录写入已验证；同步前重新检查私有性，网络或验证失败时停止。
+
+日常点「上传已保存聊天」或「检查更新」。下载仅暂存；预检后安排应用，关闭全部页面，手动停服并重新启动，再打开全新页面。安排与启动都重新核对目标、内容和本地变化，不在线覆盖活动聊天。自动检查默认关闭，开启后仅定时暂存，不上传、不应用。
+
+当前只同步当前用户全部已保存的一对一聊天正文。两端角色卡实际文件名应一致。角色、世界书、群聊和附件不随之同步。删除不传播，冲突保留双方。私有仓库没有额外加密，聊天明文保留在 Git 历史中。
+
+## 验证边界
+
+本版使用本地合成数据、隔离宿主和本地 bare 仓库测试。真实 GitHub PAT/私有数据仓库、真实聊天及 Android/Termux 真机仍需验收。桌面测试、API 模拟和 Termux 路径测试不能替代这些验收。

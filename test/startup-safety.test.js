@@ -110,6 +110,7 @@ async function childMain() {
 
     // 注入 fakeWorkerRunner：直接跑真实 orchestrator.run（不起 fork/HTTP），仍走真实核心。
     function fakeWorkerRunner(task) {
+        if (task.op === 'preflight') return require(path.join(ROOT, 'lib', 'integration', 'preflight')).preflight(task);
         return orchestrator.run({
             command: task.command,
             repoDir: task.repoDir,
@@ -188,6 +189,7 @@ async function childMain() {
         const sc = setupGitScene('s1', contentA, handle);
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
+        await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
 
         // 直接用真实核心跑 init + push（建 B=A）
         await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
@@ -204,7 +206,6 @@ async function childMain() {
         // pull → 产生 stage
         await orchestrator.run({ command: 'pull', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
 
-        await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
         const maint = await svc._maintDir(await svc._userDir(handle));
         const stage = await stateCore.loadStage(maint);
         assert.ok(stage, 'pull 后应有 stage');
@@ -263,8 +264,8 @@ async function childMain() {
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
 
-        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         const identity = stateCore.bindTargetIdentity({ repo, branch, stDataRoot: sc.dataRoot });
 
         // 构造：无 stage、无 active、无 journal（空）、有 intent、无 receipt
@@ -287,8 +288,8 @@ async function childMain() {
         const sc = setupGitScene('s2b', contentA, handle);
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
-        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         const identity = stateCore.bindTargetIdentity({ repo, branch, stDataRoot: sc.dataRoot });
         const maint = await svc._maintDir(await svc._userDir(handle));
         await fs.promises.mkdir(maint, { recursive: true });
@@ -318,8 +319,8 @@ async function childMain() {
         const sc = setupGitScene('s3', contentA, handle);
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
-        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         const maint = await svc._maintDir(await svc._userDir(handle));
         const identity = stateCore.bindTargetIdentity({ repo, branch, stDataRoot: sc.dataRoot });
 
@@ -350,8 +351,8 @@ async function childMain() {
         const sc = setupGitScene('s4', contentA, handle);
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
-        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         const maint = await svc._maintDir(await svc._userDir(handle));
         const identity = stateCore.bindTargetIdentity({ repo, branch, stDataRoot: sc.dataRoot });
 
@@ -397,8 +398,8 @@ async function childMain() {
         const sc = setupGitScene('s7', contentA, handle);
         const svc = makeService(handle, sc.dataRoot);
         const user = { handle, dataRoot: sc.dataRoot };
-        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         await svc.putConfig(user, { githubRepo: repo, branch: 'main' });
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: sc.repoDir, dataRoot: sc.dataRoot, githubRepo: repo, branch });
         const identity = stateCore.bindTargetIdentity({ repo, branch, stDataRoot: sc.dataRoot });
 
         // (a) clientsWillBeClosed=false → 拒绝（无 active → precheck-failed）

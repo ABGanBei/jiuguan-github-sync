@@ -179,18 +179,27 @@
     }
 
     // ===================== 后端健康/能力检查 =====================
-    // 后端旧版或缺 onlineSnapshot/startupApply 能力时禁止危险按钮（push/pull/schedule），
-    // 并指引更新；不自动执行更新。
-    let health = null; // { ok: boolean, version: string, onlineSnapshot: boolean, startupApply: boolean, reason: string }
+    // 首次设置和安全预检需要同一版后端。缺任一能力即阻断，不能降级到旧操作流程。
+    const REQUIRED_CAPABILITIES = ['onlineSnapshot', 'startupApply', 'setupWizard', 'safePreview', 'statusHistory'];
+    let health = null;
+    let currentStatus = null;
+    let savedConfig = null;
+    let targetLocked = false;
+    let formDirty = false;
+    let pendingRemoteInit = null;
+    let setupResult = null;
+    let preflightState = null;
+    let setupAutoSettled = false;
+    let configurationLoading = false;
 
     function capabilitiesOk() {
-        return !!(health && health.ok && health.onlineSnapshot && health.startupApply);
+        return !!(health && health.ok && REQUIRED_CAPABILITIES.every(key => health[key] === true));
     }
 
     // 危险操作守卫：后端旧版或缺能力时阻断，指引更新（不自动更新）。
     function requireCapabilities() {
         if (!capabilitiesOk()) {
-            throw Object.assign(new Error('后端能力不足或不可用（需 onlineSnapshot/startupApply）。请更新服务端插件后重试。'), { code: 'CAPABILITY_MISSING' });
+            throw Object.assign(new Error('后端能力不足或不可用（需 setupWizard/safePreview/statusHistory 及 onlineSnapshot/startupApply）。请更新服务端插件并重启后重试。'), { code: 'CAPABILITY_MISSING' });
         }
     }
 
@@ -203,6 +212,9 @@
                 version: (data && data.version) || null,
                 onlineSnapshot: cap.onlineSnapshot === true,
                 startupApply: cap.startupApply === true,
+                setupWizard: cap.setupWizard === true,
+                safePreview: cap.safePreview === true,
+                statusHistory: cap.statusHistory === true,
                 reason: null,
             };
         } catch (e) {
@@ -223,7 +235,24 @@
     // 危险操作按钮 id 列表（push/pull/schedule）；refresh/config 始终可用。
     const DANGER_BTN_IDS = ['jg-upload', 'jg-download', 'jg-schedule'];
     // 所有「操作类」按钮：操作进行中时全部禁用，避免并发/重复点击。
-    const OP_BTN_IDS = ['jg-save', 'jg-connect', 'jg-upload', 'jg-download', 'jg-schedule', 'jg-cancel', 'jg-refresh'];
+    const OP_BTN_IDS = ['jg-save', 'jg-connect', 'jg-init-confirm', 'jg-upload', 'jg-download', 'jg-schedule', 'jg-cancel', 'jg-refresh', 'jg-preflight'];
+
+    function readyForSync() {
+        return !!(currentStatus && currentStatus.readyForSync === true && !currentStatus.busy && !formDirty && !pendingRemoteInit);
+    }
+
+    function hasPendingUpload() {
+        return !!(currentStatus && currentStatus.core && currentStatus.core.pending);
+    }
+
+    function requireReady(allowPendingUpload = false) {
+        requireCapabilities();
+        if (!readyForSync()) {
+            throw new Error('同步尚未就绪：请完成保存并验证、分支初始化，或先处理状态区中的阻断原因。');
+        }
+        if (currentStatus.scheduledApply) throw new Error('已安排应用：请完成重启，或先取消安排。');
+        if (hasPendingUpload() && !allowPendingUpload) throw new Error('上次上传尚未确认，请先点击「上传已保存聊天」明确重试。');
+    }
 
     // 操作深度计数（支持 doConnect 内嵌 doSave 等嵌套 runOperation：内层结束不提前恢复按钮）。
     let opDepth = 0;
@@ -248,11 +277,11 @@
             if (id === 'jg-refresh') return; // 上面已处理
             const btn = el(id);
             if (!btn) return;
-            let disabled = !!anyOp;
+            let disabled = !!anyOp || configurationLoading;
             let reason = '';
             if (disabled) {
                 reason = '操作进行中，请稍候。';
-            } else if (DANGER_BTN_IDS.includes(id)) {
+            } else if (DANGER_BTN_IDS.includes(id) || id === 'jg-preflight') {
                 if (!capOk) {
                     disabled = true;
                     reason = '后端能力不足或不可用，请更新服务端插件后重试。';
@@ -261,11 +290,126 @@
                     reason = busyState.unknown
                         ? '无法确认宿主是否正在生成/保存，禁止操作。'
                         : '宿主正在生成/保存聊天。';
+                } else if (!readyForSync()) {
+                    disabled = true;
+                    reason = '请先完成设置与验证，或处理同步状态中的阻断原因。';
+                } else if (hasPendingUpload() && id !== 'jg-upload') {
+                    disabled = true;
+                    reason = '上次上传尚未确认，请先点击「上传已保存聊天」明确重试。';
+                } else if (currentStatus && currentStatus.scheduledApply && id !== 'jg-preflight') {
+                    disabled = true;
+                    reason = '已安排应用，请关闭所有客户端并停服再启动；也可先取消安排。';
+                } else if (id === 'jg-schedule' && !(preflightState && preflightState.ready === true && preflightState.stageId === currentStatus.stageId)) {
+                    disabled = true;
+                    reason = '请先检查待更新项，确认当前暂存可安排应用。';
+                } else if (id === 'jg-schedule' && (!el('jg-close-confirm') || !el('jg-close-confirm').checked)) {
+                    disabled = true;
+                    reason = '关闭其他客户端后，请先勾选确认。';
                 }
+            } else if ((id === 'jg-connect' || id === 'jg-init-confirm') && !capOk) {
+                disabled = true;
+                reason = '请安装或升级支持首次设置的服务端插件。';
+            } else if (id === 'jg-init-confirm' && (!pendingRemoteInit || formDirty || !el('jg-init-empty') || !el('jg-init-empty').checked)) {
+                disabled = true;
+                reason = '请先验证仓库，再明确确认初始化目标分支。';
             }
             btn.disabled = disabled;
             btn.title = disabled ? reason : '';
         });
+        ['jg-repo', 'jg-branch', 'jg-token', 'jg-auto-check', 'jg-minutes', 'jg-init-empty', 'jg-close-confirm'].forEach(id => {
+            const node = el(id);
+            if (node) node.disabled = !!anyOp || configurationLoading;
+        });
+    }
+
+    function show(id, visible) {
+        const node = el(id);
+        if (node) node.style.display = visible ? '' : 'none';
+    }
+
+    function renderTargetLock() {
+        ['jg-repo', 'jg-branch'].forEach(id => {
+            const node = el(id);
+            if (node) node.readOnly = targetLocked;
+        });
+        show('jg-target-lock', targetLocked);
+    }
+
+    function applyConfig(data, fillForm) {
+        const cfg = data && data.config;
+        if (cfg) savedConfig = cfg;
+        if (data && typeof data.targetLocked === 'boolean') targetLocked = data.targetLocked;
+        renderTargetLock();
+        if (cfg && fillForm) {
+            if (el('jg-repo')) el('jg-repo').value = cfg.githubRepo || '';
+            if (el('jg-branch')) el('jg-branch').value = cfg.branch || 'main';
+            if (el('jg-auto-check')) el('jg-auto-check').checked = cfg.autoCheckEnabled === true;
+            if (el('jg-minutes')) el('jg-minutes').value = cfg.autoCheckMinutes || 30;
+        }
+        if (el('jg-token') && data && typeof data.hasToken === 'boolean') {
+            el('jg-token').placeholder = data.hasToken ? '已保存令牌（留空不修改）；更换后需重新验证' : '个人访问令牌 (PAT)，成功保存后清空';
+        }
+    }
+
+    function verificationText(v) {
+        if (!v) return '仓库尚未验证。';
+        const privacy = v.private === true ? '私有仓库已确认' : '尚未确认私有仓库';
+        const read = v.read === 'verified' ? '读取已验证' : '读取尚未验证';
+        const write = v.write === 'verified' ? '实际写入已验证' : '写入待首次实际上传确认';
+        return privacy + ' · ' + read + ' · ' + write;
+    }
+
+    function renderSetup() {
+        const verified = setupResult && setupResult.verification;
+        const historyVerification = currentStatus && currentStatus.history && currentStatus.history.verification;
+        setText(el('jg-verification'), verificationText(formDirty ? null : (historyVerification || verified)));
+        show('jg-init-section', !!pendingRemoteInit && !formDirty);
+        if (pendingRemoteInit) {
+            setText(el('jg-init-description'), pendingRemoteInit.remoteEmpty === true
+                ? '远端仓库为空。确认后将创建所选分支，并推送一个不含聊天的初始化提交。'
+                : '仓库中已有内容，但所选分支不存在。确认后将新建该分支并推送一个不含聊天的初始化提交；其他分支保持原样。');
+        }
+        let message = '完成验证后，在这里查看结果，再选择第一次检查更新或上传。';
+        if (formDirty) message = '设置已修改，请点「保存并验证」后继续。';
+        else if (pendingRemoteInit) message = '设置尚未完成：需要确认初始化所选分支。尚未同步聊天。';
+        else if (setupResult && setupResult.error) message = '验证未完成：' + setupResult.error;
+        else if (readyForSync()) message = '设置已完成。建议先用下方「检查更新」查看远端聊天；也可选择「上传已保存聊天」。连接成功不代表聊天已同步。';
+        else if (currentStatus && currentStatus.configured) message = '配置已保存，尚未连接或未通过就绪检查。请重新验证，或查看下方阻断原因。';
+        setText(el('jg-setup-result'), message);
+        const setup = el('jg-settings');
+        if (setup && !readyForSync()) setup.open = true;
+        if (setup && readyForSync() && !setupAutoSettled) {
+            setup.open = false;
+            setupAutoSettled = true;
+        }
+    }
+
+    function formatTimestamp(at) {
+        if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return '未记录';
+        return new Date(at).toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function historyLine(label, entry) {
+        if (!entry || !entry.at) return label + '：尚无记录';
+        const outcomes = { success: '成功', ok: '成功', failed: '失败', error: '失败', conflict: '有冲突', conflicts: '有冲突', 'no-change': '无变化', 'no-changes': '无变化', unchanged: '无变化', staged: '已暂存', published: '已上传', blocked: '被阻断' };
+        const outcome = outcomes[entry.outcome] || safeText(entry.outcome || '已结束');
+        const count = Number.isFinite(entry.count) ? '，' + entry.count + ' 个' : '';
+        const error = entry.error ? '：' + safeText(typeof entry.error === 'string' ? entry.error : entry.error.message) : '';
+        return label + '：' + formatTimestamp(entry.at) + ' · ' + outcome + count + error;
+    }
+
+    function renderPreflight(preflight) {
+        preflightState = preflight || null;
+        if (!preflight) {
+            setText(el('jg-preflight-text'), '先检查待更新项。预检仅反映检查时点，重启时还会重新核对。');
+        } else if (preflight.ready === true) {
+            const count = Array.isArray(preflight.files) ? preflight.files.length : 0;
+            setText(el('jg-preflight-text'), '当前 ' + count + ' 个待更新文件通过预检。尚未写入聊天；安排与重启时都会再次核对。');
+        } else {
+            const error = preflight.error;
+            setText(el('jg-preflight-text'), '暂不能安排应用：' + safeText(error && (error.message || error.code) || '请检查当前暂存状态。'));
+        }
+        updateButtons();
     }
 
     // 展示后端安装/更新指引（后端缺失或旧版时）。
@@ -275,6 +419,8 @@
             guide.style.display = '';
             setText(guide, message);
         }
+        const technical = el('jg-technical-details');
+        if (technical) technical.open = true;
     }
 
     // 清空状态详情区（暂存列表、安排、最后操作等）。
@@ -288,6 +434,28 @@
     }
 
     function renderStatus(status) {
+        const previousStage = currentStatus && currentStatus.stageId;
+        currentStatus = status || null;
+        if (status && status.readyForSync === true) pendingRemoteInit = null;
+        if (!status || previousStage !== status.stageId) {
+            preflightState = null;
+            if (el('jg-close-confirm')) el('jg-close-confirm').checked = false;
+        }
+        if (status && typeof status.targetLocked === 'boolean') targetLocked = status.targetLocked;
+        renderTargetLock();
+        const staged = status && Array.isArray(status.stagedFiles) ? status.stagedFiles : [];
+        const hasStage = !!(status && status.stageId && staged.length);
+        show('jg-stage-panel', hasStage || !!(status && status.scheduledApply));
+        show('jg-schedule-controls', hasStage && !(status && status.scheduledApply));
+        show('jg-cancel', !!(status && status.scheduledApply));
+        show('jg-restart-guide', !!(status && status.scheduledApply));
+        const history = status && status.history || {};
+        setText(el('jg-history-check'), historyLine('最近检查更新', history.lastCheck));
+        setText(el('jg-history-upload'), historyLine('最近上传', history.lastUpload));
+        setText(el('jg-history-apply'), '最近应用：' + (status && status.lastAppliedAt ? formatTimestamp(status.lastAppliedAt) : '尚无记录'));
+        renderSetup();
+        if (!preflightState) renderPreflight(null);
+        updateButtons();
         if (!status) {
             setStatusText('未配置', 'warn');
             el('jg-conflict-box').style.display = 'none';
@@ -312,11 +480,17 @@
         } else if (status.busy) {
             setStatusText('忙：操作进行中…', 'info');
         } else if (status.scheduledApply) {
-            setStatusText('已安排应用：关闭客户端重启后自动应用暂存的聊天', 'info');
+            setStatusText('等待重启应用：尚未完成同步。请关闭当前及其他客户端，停止服务后重新启动。', 'info');
+        } else if (hasPendingUpload() && !probeErr) {
+            setStatusText('上次上传尚未确认：请点击「上传已保存聊天」明确重试；检查更新已暂停。', 'warn');
         } else if (err) {
             setStatusText('错误：' + safeText(typeof err === 'string' ? err : (err.message || JSON.stringify(err))), 'err');
+        } else if (pendingRemoteInit) {
+            setStatusText('等待确认初始化分支，设置尚未完成', 'warn');
         } else if (!connected) {
             setStatusText('已配置（尚未连接/初始化，请先「连接」）', 'warn');
+        } else if (!readyForSync()) {
+            setStatusText('已连接，但同步尚未就绪；请完成验证或处理阻断原因', 'warn');
         } else if (remoteSource === 'cached') {
             setStatusText('已连接（远端状态为缓存，非实时）', 'info');
         } else {
@@ -370,7 +544,6 @@
 
         // ---- 状态详情：stageId / 暂存文件数及列表 / 安排状态 / 最后操作 ----
         setText(el('jg-stage-id'), status.stageId ? ('暂存 stageId：' + safeText(status.stageId)) : '');
-        const staged = Array.isArray(status.stagedFiles) ? status.stagedFiles : [];
         setText(el('jg-staged-count'), '暂存文件数：' + staged.length);
         const stagedList = el('jg-staged-list');
         if (stagedList) {
@@ -402,12 +575,14 @@
                 renderStatus(data && data.status);
             } catch (e) {
                 // 404/网络等：进入错误提示
+                currentStatus = null;
+                preflightState = null;
                 showError(e);
             }
             // 后端健康/能力检查：缺 onlineSnapshot/startupApply 或旧版时禁危险按钮并指引。
             await checkHealth();
             if (!capabilitiesOk()) {
-                const capMsg = (health && health.ok) ? '后端版本过旧或缺 onlineSnapshot/startupApply 能力' : ('后端不可用：' + (health && health.reason ? health.reason : '未知'));
+                const capMsg = (health && health.ok) ? '后端版本过旧或缺首次设置/安全预检/历史状态能力' : ('后端不可用：' + (health && health.reason ? health.reason : '未知'));
                 showBackendGuide(capMsg + '。请更新服务端插件（见下方「后端安装」）。上传/下载/安排应用已禁用，仅刷新与配置可用。');
             } else {
                 const guide = el('jg-backend-guide');
@@ -460,10 +635,10 @@
         }
     }
 
-    async function doSave() {
+    async function doSave(options = {}) {
         return runOperation('保存', async () => {
-            const repo = el('jg-repo').value.trim();
-            const branch = el('jg-branch').value.trim() || 'main';
+            const repo = targetLocked && savedConfig ? savedConfig.githubRepo : el('jg-repo').value.trim();
+            const branch = targetLocked && savedConfig ? savedConfig.branch : (el('jg-branch').value.trim() || 'main');
             const token = el('jg-token').value;
             const autoCheck = el('jg-auto-check').checked;
             const minutes = parseInt(el('jg-minutes').value, 10) || 30;
@@ -477,8 +652,14 @@
             try {
                 const data = await apiCall('PUT', '/config', body);
                 el('jg-token').value = ''; // 保存后清空，不持久
-                toast('success', '配置已保存。');
-                await refreshStatus();
+                applyConfig(data, false);
+                formDirty = false;
+                pendingRemoteInit = null;
+                setupResult = null;
+                preflightState = null;
+                currentStatus = null;
+                if (!options.quiet) toast('success', '配置已保存。仓库或令牌变更后请验证再同步。');
+                if (options.refresh !== false) await refreshStatus();
                 return data;
             } catch (e) {
                 showError(e);
@@ -488,19 +669,37 @@
         });
     }
 
-    async function doConnect() {
+    async function doConnect(initializeEmptyBranch = false) {
         return runOperation('连接', async () => {
-            const initialize = el('jg-init-empty') && el('jg-init-empty').checked;
             try {
-                await doSave();
-                const data = await apiCall('POST', '/connect', { initializeEmptyBranch: !!initialize });
-                if (data && data.initializedRemote) {
-                    toast('success', '已连接并初始化空分支（普通 push，非 force）。');
+                if (!capabilitiesOk()) await checkHealth();
+                requireCapabilities();
+                // 初始化必须来自单独确认按钮；普通保存验证始终不写远端。
+                if (initializeEmptyBranch === true) {
+                    if (!pendingRemoteInit || formDirty || !el('jg-init-empty') || !el('jg-init-empty').checked) {
+                        throw new Error('请先验证仓库，并明确勾选确认初始化所选分支。');
+                    }
                 } else {
-                    toast('success', '已连接。');
+                    await doSave({ refresh: false, quiet: true });
+                }
+                const data = await apiCall('POST', '/connect', { initializeEmptyBranch: initializeEmptyBranch === true });
+                setupResult = data || {};
+                pendingRemoteInit = data && data.needsRemoteInit ? { remoteEmpty: data.remoteEmpty === true } : null;
+                if (el('jg-init-empty')) el('jg-init-empty').checked = false;
+                renderSetup();
+                if (data && data.initializedRemote) {
+                    toast('success', '私有仓库分支已初始化（普通 push）。尚未上传或应用聊天。');
+                } else if (pendingRemoteInit) {
+                    toast('warning', '已完成仓库读取检查，所选分支需要单独确认初始化。设置尚未完成。');
+                } else {
+                    toast('success', '私有仓库读取已验证。聊天尚未同步，写入待首次实际上传确认。');
                 }
                 await refreshStatus();
+                if (readyForSync() && el('jg-settings')) el('jg-settings').open = false;
+                return data;
             } catch (e) {
+                setupResult = { error: e.message };
+                renderSetup();
                 showError(e);
                 toast('error', '连接失败：' + e.message);
             }
@@ -519,14 +718,14 @@
     async function doUpload() {
         return runOperation('上传', async () => {
             try {
-                requireCapabilities();
+                requireReady(true);
                 ensureNotBusy();
                 const data = await apiCall('POST', '/push');
                 const s = summarizeCoreResult(data && data.result);
                 // 按真实摘要显示，不无条件「上传全部完成」。
                 const parts = [];
                 parts.push('已发布 ' + s.published + ' 个');
-                if (s.staged > 0) parts.push('暂存 ' + s.staged + ' 个');
+                if (s.staged > 0) parts.push('另有 ' + s.staged + ' 个远端更新候选，请点「检查更新」（尚未下载）');
                 if (s.conflicts > 0) parts.push('冲突 ' + s.conflicts + ' 个（双方已保留，见下方冲突列表）');
                 toast(s.conflicts > 0 ? 'warning' : 'success', '上传结果：' + parts.join('，') + '。');
                 await refreshStatus();
@@ -542,9 +741,10 @@
     async function doDownload() {
         return runOperation('下载', async () => {
             try {
-                requireCapabilities();
+                requireReady();
                 ensureNotBusy();
                 const data = await apiCall('POST', '/pull');
+                if (data && data.preflight) renderPreflight(data.preflight);
                 const s = summarizeCoreResult(data && data.result);
                 // 下载成功只是暂存，不写聊天；按真实摘要显示暂存/冲突数。
                 const parts = [];
@@ -553,9 +753,10 @@
                 toast(s.conflicts > 0 ? 'warning' : 'success', '下载结果：' + parts.join('，') + '（远端聊天仅暂存，尚未写入本地聊天）。');
                 // 后续步骤：先勾确认安排 → 关闭全部（含当前标签）→ 重启后重新打开应用。
                 if (s.staged > 0) {
-                    toast('info', '下一步：勾选下方「我已关闭其他客户端」并点击「安排应用（重启后）」，然后关闭全部客户端（含当前标签页）并重启后重新打开。');
+                    toast('info', '下一步：关闭其他客户端后勾选确认，安排重启应用；再关闭当前标签页，停止服务并重新启动。');
                 }
                 await refreshStatus();
+                if (data && data.preflight && currentStatus && data.preflight.stageId === currentStatus.stageId) renderPreflight(data.preflight);
                 return data;
             } catch (e) {
                 showError(e);
@@ -568,14 +769,17 @@
     async function doScheduleApply() {
         return runOperation('安排应用', async () => {
             try {
-                requireCapabilities();
+                requireReady();
                 ensureNotBusy();
-                // 先确认当前 stageId
-                let stageId = null;
-                try {
-                    const data = await apiCall('GET', '/status');
-                    stageId = data && data.status && data.status.stageId;
-                } catch (e) { /* status 读取失败会在下面 API 报错 */ }
+                const checked = await apiCall('POST', '/preflight', {});
+                renderPreflight(checked && checked.preflight);
+                const stageId = preflightState && preflightState.stageId;
+                if (!preflightState || preflightState.ready !== true) {
+                    throw new Error('当前暂存未通过预检，未安排应用。请查看待更新项。');
+                }
+                if (!currentStatus || stageId !== currentStatus.stageId) {
+                    throw new Error('待更新项已变化，请刷新状态并重新确认当前暂存后再安排。');
+                }
                 if (!stageId) {
                     toast('warning', '当前没有已暂存的 stage，无法安排应用。请先「检查下载」。');
                     return;
@@ -585,13 +789,31 @@
                     toast('warning', '请先勾选「我已关闭其他客户端，重启后重新打开」。');
                     return;
                 }
+                ensureNotBusy();
                 const data = await apiCall('POST', '/schedule-apply', { stageId, clientsWillBeClosed: true });
-                toast('success', '已安排应用：请关闭本客户端（含当前标签页）并重启后重新打开，将在启动时应用暂存的聊天。');
+                if (el('jg-close-confirm')) el('jg-close-confirm').checked = false;
+                toast('success', '等待重启应用，尚未完成同步：请关闭当前标签页，停止酒管服务并重新启动，再打开页面。');
                 await refreshStatus();
                 return data;
             } catch (e) {
                 showError(e);
                 toast('error', '安排应用失败：' + e.message);
+                throw e;
+            }
+        });
+    }
+
+    async function doPreflight() {
+        return runOperation('检查待更新项', async () => {
+            try {
+                requireReady();
+                ensureNotBusy();
+                const data = await apiCall('POST', '/preflight', {});
+                renderPreflight(data && data.preflight);
+                return data;
+            } catch (e) {
+                renderPreflight({ ready: false, error: { message: e.message } });
+                showError(e);
                 throw e;
             }
         });
@@ -625,190 +847,169 @@
     // ===================== 面板构建 =====================
 
     function buildPanelHtml() {
-        const root = document.createElement('div');
-        root.id = EXT_ID;
-        root.className = 'jg-panel';
+        const make = (tag, id, className, text) => {
+            const node = document.createElement(tag);
+            if (id) node.id = id;
+            if (className) node.className = className;
+            if (text) node.textContent = text;
+            return node;
+        };
+        const note = (parent, text) => parent.appendChild(make('p', null, 'jg-note', text));
+        const detail = (parent, id, text) => parent.appendChild(make('div', id, 'jg-detail-line', text));
+        const button = (parent, id, label, handler) => {
+            const node = make('button', id, 'menu_button', label);
+            node.type = 'button';
+            node.addEventListener('click', () => {
+                handler().catch(e => { console.error('[酒管同步] 操作未捕获异常:', e && e.message); });
+            });
+            parent.appendChild(node);
+            return node;
+        };
+        const fold = (parent, id, title) => {
+            const node = make('details', id, 'jg-fold');
+            node.appendChild(make('summary', null, null, title));
+            parent.appendChild(node);
+            return node;
+        };
+        const root = make('div', EXT_ID, 'jg-panel');
+        root.appendChild(make('h4', null, null, '酒管 GitHub 同步'));
+        note(root, '仅同步一对一角色的已保存聊天。检查更新会暂存远端内容，应用需要关闭客户端并停服再启动。');
 
-        const heading = document.createElement('h4');
-        heading.textContent = '酒管 GitHub 同步';
-        root.appendChild(heading);
+        const statusBox = make('div', 'jg-status', 'jg-status');
+        statusBox.appendChild(make('span', 'jg-status-text', 'jg-status-text', '正在读取设置…'));
+        root.appendChild(statusBox);
+        const historyBox = make('div', 'jg-history', 'jg-history');
+        detail(historyBox, 'jg-history-check', '最近检查更新：尚无记录');
+        detail(historyBox, 'jg-history-upload', '最近上传：尚无记录');
+        detail(historyBox, 'jg-history-apply', '最近应用：尚无记录');
+        root.appendChild(historyBox);
 
-        const note = document.createElement('div');
-        note.className = 'jg-note';
-        note.textContent = '界面集成预览 · 仅一对一角色聊天。上传为已保存磁盘聊天；下载仅暂存，应用须停服务并重启。';
-        root.appendChild(note);
+        const settings = fold(root, 'jg-settings', '首次设置 / 仓库与令牌');
+        settings.open = true;
+        const prepare = section('1 · 准备私有数据仓库');
+        note(prepare, '为聊天单独建立一个私有仓库，不要填写插件源码仓库。聊天会以明文进入 Git 历史，本版本未加密。两端需要相同的角色卡。');
+        const links = make('div', null, 'jg-links');
+        const addLink = (label, href) => {
+            const link = make('a', null, null, label);
+            link.href = href;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            links.appendChild(link);
+        };
+        addLink('在 GitHub 创建仓库（选 Private）', 'https://github.com/new');
+        addLink('创建细粒度访问令牌', 'https://github.com/settings/personal-access-tokens/new');
+        prepare.appendChild(links);
+        note(prepare, '令牌仅选择这个数据仓库，给予 Contents 读写权限；Metadata 保持默认只读。分支保护仍可能拒绝实际推送。');
+        settings.appendChild(prepare);
 
-        // ---- 仓库配置 ----
-        const cfgSection = section('仓库配置');
-        addField(cfgSection, '仓库 (owner/repo)', 'jg-repo', 'text', '用户名/仓库名');
-        addField(cfgSection, '分支', 'jg-branch', 'text', 'main');
-        const tokenRow = document.createElement('div');
-        tokenRow.className = 'jg-row';
-        const tokenInput = document.createElement('input');
+        const cfgSection = section('2 · 填写并验证');
+        addField(cfgSection, '数据仓库 (owner/repo)', 'jg-repo', 'text', '用户名/私有数据仓库名');
+        const branchSection = fold(cfgSection, 'jg-branch-details', '分支（默认 main）');
+        addField(branchSection, '分支', 'jg-branch', 'text', 'main');
+        const tokenRow = make('div', null, 'jg-row');
+        const tokenLabel = make('label', null, null, '访问令牌 (PAT)');
+        tokenLabel.htmlFor = 'jg-token';
+        tokenRow.appendChild(tokenLabel);
+        const tokenInput = make('input', 'jg-token', 'text_pole');
         tokenInput.type = 'password';
-        tokenInput.id = 'jg-token';
-        tokenInput.className = 'text_pole';
-        tokenInput.placeholder = '个人访问令牌 (PAT)，保存后即清空、不持久';
+        tokenInput.placeholder = '个人访问令牌 (PAT)，成功保存后清空';
         tokenInput.autocomplete = 'off';
         tokenRow.appendChild(tokenInput);
         cfgSection.appendChild(tokenRow);
-        root.appendChild(cfgSection);
+        note(cfgSection, '令牌不会回填。留空会保留已保存的令牌；更换令牌后需要重新验证。');
+        const lock = detail(cfgSection, 'jg-target-lock', '已有同步状态，仓库与分支已绑定。可更新令牌；本版不提供直接切换目标或清除历史。');
+        lock.style.display = 'none';
+        const setupOps = make('div', null, 'jg-ops');
+        button(setupOps, 'jg-connect', '保存并验证', doConnect);
+        cfgSection.appendChild(setupOps);
+        settings.appendChild(cfgSection);
 
-        // ---- 自动检查 ----
-        const autoSection = section('自动检查');
-        const autoRow = document.createElement('div');
-        autoRow.className = 'jg-row';
-        const autoCheck = document.createElement('input');
+        const resultSection = section('3 · 查看结果，开始第一次同步');
+        detail(resultSection, 'jg-verification', '仓库尚未验证。');
+        detail(resultSection, 'jg-setup-result', '完成验证后，选择下方的检查更新或上传。连接成功不代表聊天已同步。');
+        const initSection = make('div', 'jg-init-section', 'jg-box jg-warn-box');
+        initSection.style.display = 'none';
+        detail(initSection, 'jg-init-description', '所选分支需要初始化。');
+        const initRow = make('div', null, 'jg-row');
+        const initCheck = make('input', 'jg-init-empty');
+        initCheck.type = 'checkbox';
+        const initLabel = make('label', null, null, '我确认初始化所选分支（普通 push，不含聊天，不强制覆盖）');
+        initLabel.htmlFor = 'jg-init-empty';
+        initRow.appendChild(initCheck);
+        initRow.appendChild(initLabel);
+        initSection.appendChild(initRow);
+        button(initSection, 'jg-init-confirm', '确认初始化分支', () => doConnect(true));
+        resultSection.appendChild(initSection);
+        settings.appendChild(resultSection);
+
+        const autoSection = fold(settings, 'jg-auto-settings', '自动检查与其他设置');
+        const autoRow = make('div', null, 'jg-row');
+        const autoCheck = make('input', 'jg-auto-check');
         autoCheck.type = 'checkbox';
-        autoCheck.id = 'jg-auto-check';
-        autoCheck.checked = false; // 默认关闭
-        const autoLabel = document.createElement('label');
+        autoCheck.checked = false;
+        const autoLabel = make('label', null, null, '启用自动检查（默认关闭，仅定时检查并暂存）');
         autoLabel.htmlFor = 'jg-auto-check';
-        autoLabel.textContent = '启用自动检查（默认关闭；仅定时 pull 暂存，不应用）';
         autoRow.appendChild(autoCheck);
         autoRow.appendChild(autoLabel);
         autoSection.appendChild(autoRow);
-        const minRow = document.createElement('div');
-        minRow.className = 'jg-row';
-        const minLabel = document.createElement('label');
-        minLabel.htmlFor = 'jg-minutes';
-        minLabel.textContent = '间隔（分钟）';
-        const minInput = document.createElement('input');
-        minInput.type = 'number';
-        minInput.id = 'jg-minutes';
-        minInput.className = 'text_pole';
-        minInput.value = '30';
-        minInput.min = '5';
-        minRow.appendChild(minLabel);
-        minRow.appendChild(minInput);
-        autoSection.appendChild(minRow);
-        root.appendChild(autoSection);
+        addField(autoSection, '间隔（分钟）', 'jg-minutes', 'number', '30');
+        note(autoSection, '自动检查不上传、不应用。关闭服务或手机休眠时不保证运行；已安排应用时暂停检查，保留当前暂存。');
+        button(autoSection, 'jg-save', '仅保存设置', doSave);
 
-        // ---- 初始化空分支 ----
-        const initRow = document.createElement('div');
-        initRow.className = 'jg-row';
-        const initCheck = document.createElement('input');
-        initCheck.type = 'checkbox';
-        initCheck.id = 'jg-init-empty';
-        const initLabel = document.createElement('label');
-        initLabel.htmlFor = 'jg-init-empty';
-        initLabel.textContent = '连接时初始化空分支（仅当远端无分支时 bootstrap 普通 push，非 force）';
-        initRow.appendChild(initCheck);
-        initRow.appendChild(initLabel);
-        root.appendChild(initRow);
-
-        // ---- 操作按钮 ----
-        const ops = document.createElement('div');
-        ops.className = 'jg-ops';
-        const mkBtn = (id, label, handler) => {
-            const b = document.createElement('button');
-            b.id = id;
-            b.className = 'menu_button';
-            b.textContent = label;
-            b.addEventListener('click', () => { handler().catch(e => { console.error('[酒管同步] 操作未捕获异常:', e && e.message); }); });
-            ops.appendChild(b);
-            return b;
-        };
-        mkBtn('jg-refresh', '刷新', doRefresh);
-        mkBtn('jg-save', '保存', doSave);
-        mkBtn('jg-connect', '连接', doConnect);
-        mkBtn('jg-upload', '上传已保存聊天', doUpload);
-        mkBtn('jg-download', '检查下载', doDownload);
-        mkBtn('jg-schedule', '安排应用（重启后）', doScheduleApply);
-        mkBtn('jg-cancel', '取消安排', doCancelApply);
+        const ops = make('div', 'jg-main-actions', 'jg-ops jg-main-actions');
+        button(ops, 'jg-upload', '上传已保存聊天', doUpload);
+        button(ops, 'jg-download', '检查更新', doDownload);
         root.appendChild(ops);
+        note(root, '上传只处理已经保存到磁盘的聊天；检查更新不会立即覆盖聊天。先完成设置与验证，两项操作才会开放。');
 
-        // ---- 关闭确认 ----
-        const closeRow = document.createElement('div');
-        closeRow.className = 'jg-row jg-close-row';
-        const closeCheck = document.createElement('input');
+        const stagePanel = section('待更新聊天');
+        stagePanel.id = 'jg-stage-panel';
+        stagePanel.style.display = 'none';
+        detail(stagePanel, 'jg-staged-count', '暂存文件数：0');
+        const stagedList = make('ul', 'jg-staged-list', 'jg-staged-list');
+        stagePanel.appendChild(stagedList);
+        detail(stagePanel, 'jg-scheduled');
+        const scheduleControls = make('div', 'jg-schedule-controls');
+        detail(scheduleControls, 'jg-preflight-text', '预检仅反映检查时点，重启应用前还会重新核对。');
+        button(scheduleControls, 'jg-preflight', '检查待更新项', doPreflight);
+        const closeRow = make('div', null, 'jg-row jg-close-row');
+        const closeCheck = make('input', 'jg-close-confirm');
         closeCheck.type = 'checkbox';
-        closeCheck.id = 'jg-close-confirm';
-        const closeLabel = document.createElement('label');
+        const closeLabel = make('label', null, null, '我已关闭其他客户端与旧标签页；安排后会关闭当前标签页，停止酒管服务再重新启动。');
         closeLabel.htmlFor = 'jg-close-confirm';
-        closeLabel.textContent = '我已关闭其他客户端，并将在重启后重新打开（应用不是无感在线原位应用）';
         closeRow.appendChild(closeCheck);
         closeRow.appendChild(closeLabel);
-        root.appendChild(closeRow);
+        scheduleControls.appendChild(closeRow);
+        button(scheduleControls, 'jg-schedule', '安排应用（重启后）', doScheduleApply);
+        stagePanel.appendChild(scheduleControls);
+        const restart = detail(stagePanel, 'jg-restart-guide', '等待重启，尚未完成同步。现在关闭当前标签页 → 停止酒管服务 → 重新启动服务 → 再打开页面。');
+        restart.style.display = 'none';
+        button(stagePanel, 'jg-cancel', '取消安排（保留暂存）', doCancelApply).style.display = 'none';
+        root.appendChild(stagePanel);
 
-        // ---- 状态 ----
-        const statusBox = document.createElement('div');
-        statusBox.className = 'jg-status';
-        statusBox.id = 'jg-status';
-        const statusText = document.createElement('span');
-        statusText.id = 'jg-status-text';
-        statusText.className = 'jg-status-text';
-        statusText.textContent = '未配置';
-        statusBox.appendChild(statusText);
-        root.appendChild(statusBox);
-
-        // ---- 状态详情（stageId / 暂存文件 / 安排 / 最后操作 / 后端版本） ----
-        const detailBox = document.createElement('div');
-        detailBox.className = 'jg-status-detail';
-        const mkDetail = (id) => {
-            const d = document.createElement('div');
-            d.id = id;
-            d.className = 'jg-detail-line';
-            detailBox.appendChild(d);
-            return d;
-        };
-        mkDetail('jg-stage-id');
-        mkDetail('jg-staged-count');
-        const stagedList = document.createElement('ul');
-        stagedList.id = 'jg-staged-list';
-        stagedList.className = 'jg-staged-list';
-        detailBox.appendChild(stagedList);
-        mkDetail('jg-scheduled');
-        mkDetail('jg-last-op');
-        mkDetail('jg-backend-version');
-        root.appendChild(detailBox);
-
-        // ---- 冲突 ----
-        const conflictBox = document.createElement('div');
-        conflictBox.id = 'jg-conflict-box';
-        conflictBox.className = 'jg-box jg-warn-box';
+        const conflictBox = make('div', 'jg-conflict-box', 'jg-box jg-warn-box');
         conflictBox.style.display = 'none';
-        const conflictTitle = document.createElement('b');
-        conflictTitle.textContent = '冲突（保留双方，不自动选择）：';
-        conflictBox.appendChild(conflictTitle);
-        const conflictList = document.createElement('ul');
-        conflictList.id = 'jg-conflict-list';
-        conflictBox.appendChild(conflictList);
+        conflictBox.appendChild(make('b', null, null, '冲突：双方内容已保留，需要手工处理；不会自动选边。'));
+        conflictBox.appendChild(make('ul', 'jg-conflict-list', 'jg-conflict-list'));
         root.appendChild(conflictBox);
-
-        // ---- 错误 ----
-        const errBox = document.createElement('div');
-        errBox.id = 'jg-error-box';
-        errBox.className = 'jg-box jg-err-box';
-        errBox.style.display = 'none';
-        const errText = document.createElement('pre');
-        errText.id = 'jg-error-text';
-        errBox.appendChild(errText);
-        root.appendChild(errBox);
-
-        // ---- 只读探测错误（probeError，独立于 mutation 错误） ----
-        const probeBox = document.createElement('div');
-        probeBox.id = 'jg-probe-error';
-        probeBox.className = 'jg-box jg-err-box';
-        probeBox.style.display = 'none';
-        const probeText = document.createElement('pre');
-        probeText.id = 'jg-probe-error-text';
-        probeBox.appendChild(probeText);
-        root.appendChild(probeBox);
-
-        // ---- 后端安装指引（后端缺失/旧版时显示） ----
+        [['jg-error-box', 'jg-error-text'], ['jg-probe-error', 'jg-probe-error-text']].forEach(ids => {
+            const box = make('div', ids[0], 'jg-box jg-err-box');
+            box.style.display = 'none';
+            box.appendChild(make('pre', ids[1]));
+            root.appendChild(box);
+        });
+        const technical = fold(root, 'jg-technical-details', '技术详情与后端安装');
+        button(technical, 'jg-refresh', '刷新状态', doRefresh);
+        note(technical, '状态刷新读取缓存，不等同于联网检查更新。预检不是写入安全保证，安排与启动时仍会重新核验。');
+        detail(technical, 'jg-stage-id');
+        detail(technical, 'jg-last-op');
+        detail(technical, 'jg-backend-version');
         const backSection = section('后端安装');
-        const backNote = document.createElement('div');
-        backNote.className = 'jg-note';
-        backNote.textContent = '本扩展仅为前端界面；同步需要服务端插件一并安装到宿主 plugins 目录。请先 git clone 本仓库到本地并进入仓库目录，再运行一次性 Node 安装命令：node bin/install-plugin.js --app-dir <应用目录> --enable-server-plugins --install-deps --apply（详见 docs/installation.md；去掉 --apply 可先看 dry-run 计划）。安装后需重启宿主并关闭旧标签页。仅前端无法独立运行同步。';
-        backSection.appendChild(backNote);
-        const backGuide = document.createElement('div');
-        backGuide.id = 'jg-backend-guide';
-        backGuide.className = 'jg-box jg-err-box';
+        note(backSection, '请下载并解压本版源码，关闭所有酒管页面和客户端并停止服务。Windows 双击 install.cmd；Termux 在源码目录运行 bash setup.sh。向导会先展示计划，确认后一起安装前端和后台。完成后手动启动酒管并打开全新页面；如提示用户级同名扩展，请先处理遮蔽问题。详见 docs/quickstart.md。');
+        const backGuide = make('div', 'jg-backend-guide', 'jg-box jg-err-box');
         backGuide.style.display = 'none';
         backSection.appendChild(backGuide);
-        root.appendChild(backSection);
-
+        technical.appendChild(backSection);
         return root;
     }
 
@@ -836,6 +1037,7 @@
         row.appendChild(lbl);
         row.appendChild(inp);
         sec.appendChild(row);
+        return inp;
     }
 
     // ===================== 挂载 =====================
@@ -856,18 +1058,37 @@
     }
 
     function bind() {
+        // 修改仓库/分支/令牌后立即关掉同步入口，直到重新保存并验证。
+        ['jg-repo', 'jg-branch', 'jg-token'].forEach(id => {
+            const node = el(id);
+            if (node) node.addEventListener('input', () => {
+                formDirty = true;
+                preflightState = null;
+                pendingRemoteInit = null;
+                if (el('jg-init-empty')) el('jg-init-empty').checked = false;
+                renderSetup();
+                updateButtons();
+            });
+        });
+        if (el('jg-init-empty')) el('jg-init-empty').addEventListener('change', updateButtons);
+        if (el('jg-close-confirm')) el('jg-close-confirm').addEventListener('change', updateButtons);
+        if (el('jg-minutes')) {
+            el('jg-minutes').value = '30';
+            el('jg-minutes').min = '1';
+            el('jg-minutes').max = '10080';
+        }
         // 加载配置回填（仅回填非敏感字段；PAT 永不回填）
+        configurationLoading = true;
         loadConfig().then(data => {
-            const cfg = data && data.config ? data.config : {};
-            if (el('jg-repo')) el('jg-repo').value = cfg.githubRepo || '';
-            if (el('jg-branch')) el('jg-branch').value = cfg.branch || 'main';
-            if (el('jg-auto-check')) el('jg-auto-check').checked = cfg.autoCheckEnabled === true;
-            if (el('jg-minutes')) el('jg-minutes').value = cfg.autoCheckMinutes || 30;
-            // token 输入框保持为空；已保存提示来自 hasToken（后端返回，非本地猜测）。
-            if (el('jg-token')) el('jg-token').placeholder = (data && data.hasToken) ? '已保存令牌（留空不修改）；如需更换请重新输入' : '个人访问令牌 (PAT)，保存后即清空、不持久';
+            applyConfig(data, !formDirty);
+            renderSetup();
         }).catch(e => {
             // 加载配置失败：不阻断 UI，但提示
             console.warn('[酒管同步] 配置加载失败:', e && e.message);
+            showError(e);
+        }).finally(() => {
+            configurationLoading = false;
+            updateButtons();
         });
 
         // 初始状态 + 定时刷新
@@ -911,6 +1132,13 @@
             doDownload,
             doScheduleApply,
             doCancelApply,
+            doPreflight,
+            verificationText,
+            historyLine,
+            renderPreflight,
+            readyForSync,
+            applyConfig,
+            bind,
             EXT_ID,
             API_BASE,
         };

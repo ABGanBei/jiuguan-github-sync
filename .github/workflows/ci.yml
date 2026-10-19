@@ -46,6 +46,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Verify release archive
+        run: node scripts/build-release.js --out dist --format tar.gz
+
   reliable-windows:
     name: Reliable (Windows)
     runs-on: windows-latest
@@ -89,3 +92,6 @@ jobs:
 
       - name: Integration tests
         run: npm run test:integration
+
+      - name: Verify Windows release archive
+        run: node scripts/build-release.js --out dist --format zip

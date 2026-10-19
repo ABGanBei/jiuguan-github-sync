@@ -701,6 +701,35 @@ async function childMain() {
         assert.strictEqual(sha(path.join(c.dataRoot, ART)), aEdit2Hash, '本地 a-edit2 保留');
     }));
 
+    tests.push(runTest(10, '集成检查遇到真实未发布 pending 时在锁内停止；显式上传仍可安全重试', async () => {
+        const c = setupScenario(10, [{ rel: ART, content: jl('base', {}) }]);
+        await orchestrator.run(onlineOpts(c, 'init'));
+        await orchestrator.run(onlineOpts(c, 'push'));
+        fs.writeFileSync(path.join(c.dataRoot, ART), jl('not-published-yet', {}));
+        const w = spawnWorker({ task: 'fault', command: 'push', repoDir: c.repoDir,
+            dataRoot: c.dataRoot, repo: c.repo, branch: 'main', bare: c.bare,
+            offlineConfirmed: true,
+            fault: { target: 'pushBranch', module: 'git-tree', when: 'before', action: 'exit', exitCode: 77 } });
+        assert.strictEqual(w.status, 77, w.stderr);
+        cleanupSyntheticLocks(c);
+        const maint = path.join(c.repoDir, '.git', 'dsr');
+        const pendingPath = path.join(maint, 'pending.json');
+        const pending = fs.readFileSync(pendingPath);
+        const savedState = fs.readFileSync(path.join(maint, 'state.json'));
+        const head = must(['--git-dir', c.bare, 'rev-parse', 'main']);
+        const chat = fs.readFileSync(path.join(c.dataRoot, ART));
+        const worker = require('../lib/integration/worker-entry');
+        await assert.rejects(() => worker.runCore({ ...onlineOpts(c, 'pull'), op: 'core' }),
+            e => e.code === 'PENDING_UPLOAD_REQUIRES_RETRY');
+        assert.deepStrictEqual(fs.readFileSync(pendingPath), pending);
+        assert.deepStrictEqual(fs.readFileSync(path.join(maint, 'state.json')), savedState);
+        assert.deepStrictEqual(fs.readFileSync(path.join(c.dataRoot, ART)), chat);
+        assert.strictEqual(must(['--git-dir', c.bare, 'rev-parse', 'main']), head);
+        await worker.runCore({ ...onlineOpts(c, 'push'), op: 'core' });
+        assert.strictEqual(await stateMod.loadPending(maint), null);
+        assert.deepStrictEqual(show(c.bare, ART), chat);
+    }));
+
     // ---- 汇总 ----
     const coreModules = ['orchestrator', 'state', 'apply', 'planner', 'git-tree', 'hash-scan'];
     const coreHashes = {};

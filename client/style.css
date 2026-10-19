@@ -12,6 +12,64 @@
     margin: 0 0 8px 0;
 }
 
+.jg-panel p { margin: 6px 0; }
+
+.jg-fold {
+    border: 1px solid rgba(150, 150, 150, 0.35);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 10px 0;
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.jg-fold > summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 3px 0;
+}
+
+.jg-fold[open] > summary { margin-bottom: 10px; }
+.jg-fold .jg-fold { background: transparent; }
+
+.jg-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 8px 0;
+}
+
+.jg-links a { text-decoration: underline; }
+
+.jg-history {
+    margin: 8px 0 12px;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.jg-ops.jg-main-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.jg-main-actions button {
+    min-height: 44px;
+    border: 1px solid rgba(91, 192, 222, 0.5);
+    font-weight: 600;
+}
+
+.jg-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
+.jg-panel input[readonly] { opacity: 0.75; cursor: default; }
+.jg-panel input[type="checkbox"] { flex: 0 0 auto; }
+
+#jg-target-lock { margin: 8px 0; color: #f0ad4e; }
+#jg-verification { line-height: 1.7; }
+#jg-setup-result { margin: 8px 0; line-height: 1.6; }
+#jg-stage-panel { margin-top: 12px; }
+#jg-restart-guide { font-weight: 600; line-height: 1.8; }
+#jg-preflight-text { margin: 8px 0; line-height: 1.7; }
+
 .jg-note {
     font-size: 12px;
     color: #999;
@@ -158,6 +216,7 @@
     .jg-row label { width: 100%; }
     .jg-row input.text_pole { flex: 1 1 auto; width: 100%; }
     .jg-ops { flex-direction: column; }
+    .jg-main-actions { grid-template-columns: 1fr; }
     .jg-ops button { width: 100%; }
     .jg-close-row { flex-direction: row; align-items: flex-start; }
 }

@@ -1,11 +1,11 @@
 {
-    "display_name": "酒管 GitHub 同步",
-    "loading_order": 200,
-    "requires": [],
-    "optional": [],
-    "js": "client/index.js",
-    "css": "client/style.css",
-    "author": "JOJO666888888",
-    "version": "1.3.0-preview.1",
-    "homePage": "https://github.com/ABGanBei/jiuguan-github-sync"
+  "display_name": "酒管 GitHub 同步",
+  "loading_order": 200,
+  "requires": [],
+  "optional": [],
+  "js": "client/index.js",
+  "css": "client/style.css",
+  "author": "JOJO666888888",
+  "version": "1.4.0-preview.1",
+  "homePage": "https://github.com/ABGanBei/jiuguan-github-sync"
 }

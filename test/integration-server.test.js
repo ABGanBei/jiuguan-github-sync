@@ -104,6 +104,13 @@ async function childMain() {
 
     const repo = 'owner/repo';
     const branch = 'main';
+    const syntheticToken = 'ghp_' + 'e'.repeat(32);
+    // Metadata is injected: all transport still targets the isolated local bare repositories.
+    const repositoryInspector = async ({ repo: inspectedRepo, token }) => {
+        assert.strictEqual(inspectedRepo, repo);
+        assert.strictEqual(token, syntheticToken, '连接验证只使用固定合成 token');
+        return { private: true, fullName: repo, writePermissionHint: true };
+    };
 
     // 每个「需要 git 仓库」的测试用独立 handle，避免共享 repoDir 互相污染。
     function ctxFor(tag) {
@@ -118,6 +125,7 @@ async function childMain() {
             hostRoot: RUN,
             getUsers: () => [{ handle: h, root: dr }],
             log: () => {},
+            repositoryInspector,
             ...overrides,
         });
         return { handle: h, dataRoot: dr, userDirAbs: ud, repoDirAbs: rd, makeService: makeServiceFor, user: { handle: h, dataRoot: dr } };
@@ -150,10 +158,22 @@ async function childMain() {
             getUsers: () => [{ handle, root: dataRoot }],
             workerRunner: null, // 用真实 worker
             log: () => {},
+            repositoryInspector,
             ...overrides,
         });
     }
     const user = { handle, dataRoot };
+    // Stubbed worker tests use the real local init/state format and public connect gate.
+    // This helper never substitutes a hand-written verification record or contacts GitHub.
+    async function configureStubbedSync(svc, c, config = {}) {
+        await svc.putConfig(c.user, { githubRepo: repo, branch, token: syntheticToken, ...config });
+        fs.mkdirSync(c.repoDirAbs, { recursive: true });
+        mustGit(['init', '-q', '-b', branch], c.repoDirAbs);
+        await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: c.repoDirAbs,
+            dataRoot: c.dataRoot, githubRepo: repo, branch });
+        const connected = await svc.connect(c.user, {});
+        assert.strictEqual(connected.connected, true, '合成 worker 也必须通过 connect 验证门禁');
+    }
     function reqOf(over = {}) {
         return { user: { profile: { handle }, directories: { root: dataRoot } }, body: {}, ...over };
     }
@@ -233,6 +253,8 @@ async function childMain() {
             () => svc.putConfig(user, { githubRepo: 'owner/other', branch: 'main' }),
             (e) => e.statusCode === 409 && e.code === 'TARGET_SWITCH_REJECTED'
         );
+        await assert.rejects(() => svc.putConfig(user, { githubRepo: '' }),
+            (e) => e.statusCode === 409 && e.code === 'TARGET_SWITCH_REJECTED', '不得先清目标再换仓库');
         // 历史仍在（state.json 未被清）
         assert.ok(fs.existsSync(path.join(maint, 'state.json')), '历史 state.json 不应被清除');
     });
@@ -261,11 +283,12 @@ async function childMain() {
         }
         fs.writeFileSync(path.join(c.dataRoot, 'chats', 'Actor', 'a.jsonl'), seed);
 
+        // 先保存目标，再建立绑定 state；已有 state 时不允许事后补改目标。
+        const svc = c.makeService();
+        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
         // 直接核心 init（建立 state，offline 合法）
         await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: c.repoDirAbs, dataRoot: c.dataRoot, githubRepo: repo, branch });
 
-        const svc = c.makeService();
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
         const st = await svc.status(c.user);
         assert.strictEqual(st.success, true);
         assert.strictEqual(st.status.configured, true);
@@ -282,7 +305,7 @@ async function childMain() {
         const bareUrl = `file:///${bare.replace(/\\/g, '/')}`;
 
         const svc = c.makeService({ insteadOf: { [`https://github.com/${repo}.git`]: bareUrl } });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
+        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', token: syntheticToken });
 
         // 不传 initializeEmptyBranch：远端无分支 → 报告 needsRemoteInit
         const r1 = await svc.connect(c.user, {});
@@ -320,6 +343,8 @@ async function childMain() {
         }
         fs.writeFileSync(path.join(c.dataRoot, 'chats', 'Actor', 'a.jsonl'), seed);
 
+        const svc = c.makeService();
+        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
         // 建立基线：init + push（L=R → 建 B）
         await orchestrator.run({ command: 'init', offlineConfirmed: true, repoDir: c.repoDirAbs, dataRoot: c.dataRoot, githubRepo: repo, branch });
         await orchestrator.run({ command: 'push', offlineConfirmed: true, repoDir: c.repoDirAbs, dataRoot: c.dataRoot, githubRepo: repo, branch });
@@ -337,9 +362,6 @@ async function childMain() {
 
         // pull（offline 合法）→ 产生 stage
         await orchestrator.run({ command: 'pull', offlineConfirmed: true, repoDir: c.repoDirAbs, dataRoot: c.dataRoot, githubRepo: repo, branch });
-
-        const svc = c.makeService();
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
 
         // 读 stage，构造正确 intent
         const maint = await svc._maintDir(await svc._userDir(c.handle));
@@ -409,7 +431,7 @@ async function childMain() {
         await router.invoke('get', '/health', reqOf(), resH);
         assert.strictEqual(resH.statusCode, 200);
         assert.strictEqual(resH.body.success, true);
-        assert.strictEqual(resH.body.version, '1.3.0-preview.1');
+        assert.strictEqual(resH.body.version, require(path.join(ROOT, 'package.json')).version);
         assert.strictEqual(resH.body.startupApplyOnly, true);
 
         // health 无身份 → 401（身份策略统一）
@@ -599,7 +621,7 @@ async function childMain() {
         fs.writeFileSync(path.join(c.dataRoot, 'chats', 'Actor', 'a.jsonl'), seed);
 
         const svc = c.makeService({ insteadOf: { [`https://github.com/${repo}.git`]: bareUrl } });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
+        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', token: syntheticToken });
 
         // 1) connect：本地 init repo + origin + 在线 init（建立 state）
         const conn = await svc.connect(c.user, {});
@@ -662,7 +684,7 @@ async function childMain() {
         const svc = c.makeService({ setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, workerRunner: fakeRunner });
 
         // 配置：启用 autoCheck，1 分钟间隔（base=60000ms）
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', autoCheckEnabled: true, autoCheckMinutes: 1 });
+        await configureStubbedSync(svc, c, { autoCheckEnabled: true, autoCheckMinutes: 1 });
         const u = await svc._getRuntime(c.handle);
         assert.strictEqual(scheduled.length, 1, 'putConfig 启用后应调度一次');
         assert.strictEqual(scheduled[0], 60000, '首次调度延迟应为 base=60000ms');
@@ -800,7 +822,7 @@ async function childMain() {
         ];
         const fakeRunner = async (task) => ({ success: true, staged: [], conflicts });
         const svc = c.makeService({ setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, workerRunner: fakeRunner, getUsers: () => [{ handle: c.handle, root: c.dataRoot }] });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', autoCheckEnabled: true, autoCheckMinutes: 1 });
+        await configureStubbedSync(svc, c, { autoCheckEnabled: true, autoCheckMinutes: 1 });
         const u0 = await svc._getRuntime(c.handle);
         assert.deepStrictEqual(u0.lastConflicts, [], '初始 lastConflicts 应为空');
 
@@ -833,7 +855,8 @@ async function childMain() {
             return { success: true, staged: [], initialized: true, stage: null, remoteHead: '0'.repeat(40) };
         };
         const svc = c.makeService({ workerRunner: deferredRunner });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
+        await configureStubbedSync(svc, c);
+        calls.length = 0; // 互斥断言只统计完成连接后的操作。
 
         // 启动 status（不 await）：占用 busy 后进入 core status worker 挂起
         const sp = svc.status(c.user);
@@ -870,7 +893,8 @@ async function childMain() {
             return { success: true, staged: [], initialized: true, stage: null, remoteHead: '0'.repeat(40) };
         };
         const svc = c.makeService({ workerRunner: deferredRunner });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main' });
+        await configureStubbedSync(svc, c);
+        calls.length = 0;
 
         // 启动 push（不 await）：占用 busy 后进入 core push worker 挂起
         const pp = svc.push(c.user, {});
@@ -947,6 +971,9 @@ async function childMain() {
     // ===== 26. 冷初始化并发 getConfig+status+push：去重只初始化一次、lease 全释放、无永久 busy =====
     runTest(26, '冷初始化并发 getConfig+status+push：只初始化一次、lease 全释放、无永久 busy', async () => {
         const c = ctxFor('cold26');
+        // 用独立 service 完成首次配置/验证，再用全新实例验证真正的冷入口竞争。
+        const setupSvc = c.makeService({ workerRunner: async () => ({ success: true }) });
+        await configureStubbedSync(setupSvc, c);
         let loadCalls = 0;
         const pendingLoad = new Map();
         const readyCfg = { githubRepo: repo, branch: 'main', autoCheckEnabled: false, autoCheckMinutes: 30 };
@@ -956,7 +983,7 @@ async function childMain() {
             if (loadCalls === 1) {
                 return new Promise((resolve) => { pendingLoad.set('load', resolve); });
             }
-            return { config: { ...readyCfg }, token: '' };
+            return { config: { ...readyCfg }, token: syntheticToken };
         };
         const workerCalls = [];
         const fakeRunner = async (task) => {
@@ -975,7 +1002,7 @@ async function childMain() {
         assert.strictEqual(loadCalls, 1, '并发冷入口 loadRuntime 只调用一次（per-handle 去重）');
 
         // 释放初始化：三请求复用同一 runtime，不产生 uA/uB 覆盖 busy
-        pendingLoad.get('load')({ config: { ...readyCfg }, token: '' });
+        pendingLoad.get('load')({ config: { ...readyCfg }, token: syntheticToken });
         const [g, s, pr] = await Promise.all([pGet, pStatus, pPush]);
         assert.strictEqual(loadCalls, 1, '释放后 loadRuntime 仍只调用一次（成功只落一个 runtime）');
         assert.strictEqual(g.config.githubRepo, repo, 'getConfig 应读到已配置 githubRepo');
@@ -1143,7 +1170,7 @@ async function childMain() {
             return { success: true, staged: [], stage: null };
         };
         const svc = c.makeService({ setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, workerRunner: fakeRunner });
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', autoCheckEnabled: true, autoCheckMinutes: 1 });
+        await configureStubbedSync(svc, c, { autoCheckEnabled: true, autoCheckMinutes: 1 });
 
         // 先安排 intent
         const intent = {
@@ -1193,12 +1220,13 @@ async function childMain() {
         const fakeClearTimeout = (t) => { if (t && activeTimers.has(t.id)) activeTimers.delete(t.id); };
 
         const svc = c.makeService({ setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, workerRunner: fakeRunner });
+        // 初始配置必须先于任何绑定 intent；损坏 intent 不得成为绕过目标保护的理由。
+        await configureStubbedSync(svc, c, { autoCheckEnabled: true, autoCheckMinutes: 1 });
         // 用损坏的 intent 文件制造 CORRUPT_STORAGE：直接写非法 JSON 到 intent 路径
         const uDir = await svc._userDir(c.handle);
         const intentPath = path.join(uDir, 'intent.json');
         fs.mkdirSync(uDir, { recursive: true });
         fs.writeFileSync(intentPath, '{bad json', 'utf8');
-        await svc.putConfig(c.user, { githubRepo: repo, branch: 'main', autoCheckEnabled: true, autoCheckMinutes: 1 });
         assert.strictEqual(activeTimers.size, 1, 'putConfig 后应有 1 个 active timer');
 
         const beforeCalls = calls.length;
@@ -1238,6 +1266,7 @@ async function childMain() {
         timer2.fn();
         await waitUntil(() => calls.length === beforeCalls + 1, '修复后应恢复 pull');
         assert.strictEqual(calls[calls.length - 1], 'pull', '应调用 core pull');
+        await waitUntil(() => !u.busy, '等待本次 pull 完成历史记录和退避重置');
         // 成功后 backoff 重置
         assert.strictEqual(u.backoffMs, 0, '成功后 backoff 重置');
         await waitUntil(() => {
@@ -1248,6 +1277,90 @@ async function childMain() {
         assert.strictEqual(timer3.ms, 60000, '成功后恢复基础间隔 60000ms');
 
         svc.stopAll();
+    });
+
+    runTest(32, '更换凭据严格失效：拒绝非字符串，记录写失败保留原 token 和验证', async () => {
+        const c = ctxFor('credentials32');
+        const svc = c.makeService({ workerRunner: async () => ({ success: true }) });
+        await configureStubbedSync(svc, c);
+        const tokenPath = path.join(c.userDirAbs, 'secrets', 'token');
+        const historyPath = path.join(c.userDirAbs, 'activity.json');
+        const beforeToken = fs.readFileSync(tokenPath);
+        const beforeHistory = fs.readFileSync(historyPath);
+        await assert.rejects(() => svc.putConfig(c.user, { token: ['synthetic-replacement'] }),
+            (e) => e.statusCode === 400, '数组 token 应在触碰磁盘前拒绝');
+        assert.ok(fs.readFileSync(tokenPath).equals(beforeToken));
+        assert.ok(fs.readFileSync(historyPath).equals(beforeHistory));
+
+        const originalSave = storageMod.saveJson;
+        storageMod.saveJson = async (file, value) => {
+            if (path.resolve(file) === path.resolve(historyPath)) {
+                throw Object.assign(new Error('synthetic history write failure'), { code: 'EIO' });
+            }
+            return originalSave(file, value);
+        };
+        try {
+            await assert.rejects(() => svc.putConfig(c.user, { token: 'synthetic-replacement' }), /history write failure/);
+        } finally { storageMod.saveJson = originalSave; }
+        assert.ok(fs.readFileSync(tokenPath).equals(beforeToken), '失效记录不能持久化时不得换 token');
+        assert.ok(fs.readFileSync(historyPath).equals(beforeHistory), '原验证记录应完整保留');
+    });
+
+    runTest(33, '每次可能发布前重新验证私有仓库，公开或探测失败均不进入核心', async () => {
+        const c = ctxFor('private33');
+        const calls = [];
+        let visibility = 'private';
+        let inspections = 0;
+        const svc = c.makeService({
+            workerRunner: async task => { calls.push(task); return { success: true, published: [], staged: [], conflicts: [] }; },
+            repositoryInspector: async args => {
+                inspections++;
+                await repositoryInspector(args);
+                if (visibility === 'unreachable') throw Object.assign(new Error('synthetic metadata unreachable'), { code: 'GITHUB_UNAVAILABLE' });
+                return { private: visibility === 'private', fullName: repo };
+            },
+            setTimeout: () => ({ unref() {} }), clearTimeout: () => {},
+        });
+        await configureStubbedSync(svc, c, { autoCheckEnabled: true, autoCheckMinutes: 1 });
+        calls.length = 0;
+        const afterConnect = inspections;
+        visibility = 'public';
+        await assert.rejects(() => svc.push(c.user, {}), e => e.code === 'PRIVATE_REPOSITORY_REQUIRED');
+        await assert.rejects(() => svc.pull(c.user, {}), e => e.code === 'PRIVATE_REPOSITORY_REQUIRED');
+        await svc._autoPull(c.handle);
+        assert.strictEqual(calls.length, 0, '手动/自动操作都不得把公开仓库交给核心');
+        assert.strictEqual(inspections, afterConnect + 3, 'push/pull/auto 各自重新验证');
+        visibility = 'unreachable';
+        await assert.rejects(() => svc.push(c.user, {}), e => e.code === 'GITHUB_UNAVAILABLE');
+        assert.strictEqual(calls.length, 0, '无法核验私有性时关闭发布门禁');
+        svc.stopAll();
+    });
+
+    runTest(34, '已确认推送后 activity 读写故障不冒报网络失败，状态报告记录错误', async () => {
+        const c = ctxFor('history34');
+        let corePushes = 0;
+        let pushed = false;
+        const svc = c.makeService({ workerRunner: async task => {
+            if (task.command === 'push') { corePushes++; pushed = true; return { published: ['chats/Actor/a.jsonl'], conflicts: [] }; }
+            return { success: true };
+        } });
+        await configureStubbedSync(svc, c);
+        const historyPath = path.join(c.userDirAbs, 'activity.json');
+        const originalLoad = storageMod.loadJson;
+        storageMod.loadJson = async file => {
+            if (pushed && path.resolve(file) === path.resolve(historyPath)) {
+                throw Object.assign(new Error('synthetic post-push history read failure'), { code: 'EIO' });
+            }
+            return originalLoad(file);
+        };
+        try {
+            const result = await svc.push(c.user, {});
+            assert.strictEqual(result.success, true, '核心已确认成功必须保留成功结果');
+            assert.strictEqual(corePushes, 1, '记录故障不能重试核心推送');
+            const runtime = await svc._getRuntime(c.handle);
+            assert.strictEqual(runtime.lastError, null, '不伪造推送错误');
+            assert.match(runtime.historyError, /post-push history read failure/);
+        } finally { storageMod.loadJson = originalLoad; }
     });
 
     // ---- 汇总 ----

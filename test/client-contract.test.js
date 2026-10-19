@@ -61,19 +61,20 @@ const read = p => fs.readFileSync(path.join(ROOT, p), 'utf-8');
 // ---- 1) 根 manifest（1.17 前端扩展） ----
 const rootManifest = JSON.parse(read('manifest.json'));
 const clientManifest = JSON.parse(read(path.join('client', 'manifest.json')));
+const packageVersion = JSON.parse(read('package.json')).version;
 const indexSrc = read(path.join('client', 'index.js'));
 const styleSrc = fs.readFileSync(path.join(CLIENT, 'style.css'), 'utf-8');
 
-test('根 manifest：display_name=酒管、version=1.3.0-preview.1、js/css 指向 client', () => {
+test('根 manifest：display_name=酒管、version 与 package 一致、js/css 指向 client', () => {
     assert.strictEqual(rootManifest.display_name, '酒管 GitHub 同步');
-    assert.strictEqual(rootManifest.version, '1.3.0-preview.1');
+    assert.strictEqual(rootManifest.version, packageVersion);
     assert.strictEqual(rootManifest.js, 'client/index.js');
     assert.strictEqual(rootManifest.css, 'client/style.css');
 });
 
 test('client/manifest.json：js/css/version/display_name 同步', () => {
     assert.strictEqual(clientManifest.display_name, '酒管 GitHub 同步');
-    assert.strictEqual(clientManifest.version, '1.3.0-preview.1');
+    assert.strictEqual(clientManifest.version, packageVersion);
     assert.strictEqual(clientManifest.js, 'index.js');
     assert.strictEqual(clientManifest.css, 'style.css');
 });
@@ -359,14 +360,14 @@ test('getRequestHeaders 从 context.getRequestHeaders 取且含 CSRF；无 conte
     assert.strictEqual(h, null, '无 context 时应返回 null（apiCall 将拒绝，不无 CSRF 降级）');
 });
 
-// ---- 15) 文案不含「本地离线维护 CLI 预览」，为界面集成预览 + 后端一次性 Node 安装命令 ----
-test('文案为界面集成预览，后端指引含一次性 Node 安装命令，不含「本地离线维护 CLI 预览」', () => {
+// ---- 15) 文案不含「本地离线维护 CLI 预览」，安装指引使用统一向导 ----
+test('文案为界面集成预览，安装指引使用统一向导，不含「本地离线维护 CLI 预览」', () => {
     assert.ok(!indexSrc.includes('本地离线维护 CLI 预览'), '不应出现「本地离线维护 CLI 预览」');
     assert.ok(indexSrc.includes('界面集成预览'), '应含「界面集成预览」');
-    assert.ok(indexSrc.includes('install-plugin.js'), '后端指引应含一次性 Node 安装命令 install-plugin.js');
-    assert.ok(indexSrc.includes('--app-dir'), '应含 --app-dir 参数');
-    assert.ok(indexSrc.includes('--enable-server-plugins'), '应含 --enable-server-plugins');
-    assert.ok(indexSrc.includes('docs/installation.md'), '应引用 docs/installation.md');
+    assert.ok(indexSrc.includes('install.cmd'), '应提示 Windows 统一入口');
+    assert.ok(indexSrc.includes('bash setup.sh'), '应提示 Termux 统一入口');
+    assert.ok(indexSrc.includes('docs/quickstart.md'), '应引用新版新手说明');
+    assert.ok(!indexSrc.includes('install-plugin.js'), '不应再引导用户分开安装后台');
 });
 
 // ---- 16) health 能力/版本检查：旧版或缺能力禁危险按钮 ----
@@ -469,12 +470,12 @@ test('renderStatus 区分 未配置/已配置未初始化/错误/cached/实时�
     assert.ok(statusText().includes('未连接') || statusText().includes('尚未连接'), '应提示未连接/未初始化');
 
     // 已连接但 remoteSource=cached → 不得宣称实时远端连通
-    exp.renderStatus({ configured: true, connected: true, remoteSource: 'cached' });
+    exp.renderStatus({ configured: true, connected: true, readyForSync: true, remoteSource: 'cached' });
     assert.ok(statusText().includes('缓存') || statusText().includes('非实时'), 'cached 不得宣称实时远端连通');
     assert.ok(!statusText().includes('实时连通'), 'cached 不应显示「实时连通」');
 
     // 已连接 + live → 实时
-    exp.renderStatus({ configured: true, connected: true, remoteSource: 'live' });
+    exp.renderStatus({ configured: true, connected: true, readyForSync: true, remoteSource: 'live' });
     assert.ok(statusText().includes('实时'), 'live 应显示实时连通');
 
     // 错误
@@ -614,14 +615,13 @@ test('busyMod 缺 isGenerating 函数或 isChatSaving 布尔 → unknown（不�
     assert.strictEqual(b.unknown, true, '两者都缺应 unknown');
 });
 
-// ---- 23) backend 指引含 --install-deps --apply + git clone，非 dry-run ----
-test('后端安装指引含 --install-deps --apply 可执行命令 + git clone，非仅 dry-run', () => {
-    assert.ok(indexSrc.includes('--install-deps'), '应含 --install-deps');
-    assert.ok(indexSrc.includes('--apply'), '应含 --apply（可执行，非仅 dry-run）');
-    assert.ok(indexSrc.includes('git clone'), '应说明先 git clone 到本地进入仓库');
-    // 仍保留 --enable-server-plugins / --app-dir（既有契约）
-    assert.ok(indexSrc.includes('--enable-server-plugins'), '应含 --enable-server-plugins');
-    assert.ok(indexSrc.includes('--app-dir'), '应含 --app-dir');
+// ---- 23) backend 指引明确计划确认、停服和手动重启 ----
+test('安装指引明确统一安装、先展示计划、停服和手动启动', () => {
+    assert.ok(indexSrc.includes('先展示计划'), '应说明先核对计划');
+    assert.ok(indexSrc.includes('确认后一起安装前端和后台'), '应说明前后端统一安装');
+    assert.ok(indexSrc.includes('关闭所有酒管页面和客户端并停止服务'), '应要求关闭客户端并停服');
+    assert.ok(indexSrc.includes('手动启动酒管并打开全新页面'), '应说明需要手动启动服务');
+    assert.ok(indexSrc.includes('用户级同名扩展'), '应提示用户级扩展遮蔽风险');
     // 不应声称宿主有服务端插件设置页（config 由 installer 启用）
     assert.ok(!indexSrc.includes('在插件页启用'), '不应声称宿主有服务端插件设置页');
 });
@@ -687,6 +687,8 @@ function respond(call, obj) {
     call.resolve({ status: 200, ok: true, text: () => Promise.resolve(JSON.stringify(obj)) });
 }
 
+const wizardHealth = { version: packageVersion, capabilities: { onlineSnapshot: true, startupApply: true, setupWizard: true, safePreview: true, statusHistory: true } };
+
 const flush = () => new Promise(r => setTimeout(r, 0));
 async function until(fn, ms = 4000) {
     const t0 = Date.now();
@@ -722,9 +724,9 @@ test('刷新在途禁用 mutation 按钮；重复 refreshStatus 合并不新增 
     assert.strictEqual(elems['jg-save'].disabled, true, '刷新在途保存应禁用');
 
     // 结束刷新：status + health
-    respond(statusCalls()[0], { status: { configured: true, connected: true, remoteSource: 'cached' } });
+    respond(statusCalls()[0], { status: { configured: true, connected: true, readyForSync: true, remoteSource: 'cached' } });
     await until(() => fetchCalls.some(c => /\/health/.test(c.url)));
-    respond(fetchCalls.find(c => /\/health/.test(c.url)), { capabilities: { onlineSnapshot: true, startupApply: true }, version: '1.3.0' });
+    respond(fetchCalls.find(c => /\/health/.test(c.url)), wizardHealth);
     await p1;
     await until(() => !exp.isAnyOpInProgress());
 
@@ -754,30 +756,30 @@ test('定时刷新（maybeAutoRefresh）在 mutation 在途时跳过，不新增
     await until(() => fetchCalls.some(c => /\/status/.test(c.url)));
     respond(fetchCalls.find(c => /\/status/.test(c.url)), { status: {} });
     await until(() => fetchCalls.some(c => /\/health/.test(c.url)));
-    respond(fetchCalls.find(c => /\/health/.test(c.url)), { capabilities: { onlineSnapshot: true, startupApply: true } });
+    respond(fetchCalls.find(c => /\/health/.test(c.url)), wizardHealth);
     await saveP;
     await until(() => !exp.isAnyOpInProgress());
 });
 
 // ---- 27) doConnect 嵌套 doSave：内层保存返回后 connect 仍在途，按钮继续禁用（深度计数） ----
-test('doConnect 嵌套 doSave：save 返回后 connect 仍在途，按钮继续禁用（深度计数）', async () => {
+test('doConnect 合并保存和验证，中间不刷 status，connect 在途持续禁用按钮', async () => {
     const { exp, elems, fetchCalls } = mkRuntime();
     await waitBusyLoaded(exp);
     elems['jg-repo'].value = 'owner/repo';
 
     const connectP = exp.doConnect();
 
+    await until(() => fetchCalls.some(c => /\/health/.test(c.url)));
+    respond(fetchCalls.find(c => /\/health/.test(c.url)), wizardHealth);
+
     // 1) 内层 doSave → PUT /config
     await until(() => fetchCalls.some(c => /\/config/.test(c.url) && c.method === 'PUT'));
     assert.strictEqual(elems['jg-connect'].disabled, true, 'connect 在途连接按钮应禁用');
 
-    // 2) 完成内层 doSave（config + 其内部 refreshStatus）
+    // 2) 完成内层保存，不额外请求 status；同一动作继续连接验证。
     respond(fetchCalls.find(c => /\/config/.test(c.url) && c.method === 'PUT'), { success: true });
-    await until(() => fetchCalls.some(c => /\/status/.test(c.url)));
-    respond(fetchCalls.find(c => /\/status/.test(c.url)), { status: {} });
-    await until(() => fetchCalls.some(c => /\/health/.test(c.url)));
-    respond(fetchCalls.find(c => /\/health/.test(c.url)), { capabilities: { onlineSnapshot: true, startupApply: true } });
     await until(() => fetchCalls.some(c => /\/connect/.test(c.url) && c.method === 'POST'));
+    assert.strictEqual(fetchCalls.filter(c => /\/status/.test(c.url)).length, 0, '保存验证之间不刷 status');
 
     // 3) 内层 doSave 已返回、POST /connect 在途：外层 opDepth 仍为 1，按钮继续禁用
     assert.strictEqual(exp.isAnyOpInProgress(), true, 'save 返回后 connect 仍在途，isAnyOpInProgress 仍 true');
@@ -791,7 +793,7 @@ test('doConnect 嵌套 doSave：save 返回后 connect 仍在途，按钮继续�
     respond(fetchCalls.filter(c => /\/status/.test(c.url))[sc], { status: {} });
     const hc = fetchCalls.filter(c => /\/health/.test(c.url)).length;
     await until(() => fetchCalls.filter(c => /\/health/.test(c.url)).length > hc);
-    respond(fetchCalls.filter(c => /\/health/.test(c.url))[hc], { capabilities: { onlineSnapshot: true, startupApply: true } });
+    respond(fetchCalls.filter(c => /\/health/.test(c.url))[hc], wizardHealth);
     await connectP;
     await until(() => !exp.isAnyOpInProgress());
 

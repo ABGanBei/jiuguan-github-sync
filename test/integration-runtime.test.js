@@ -216,8 +216,9 @@ async function childMain() {
             op: 'connect', repoDir, branch, remoteUrl: githubUrl, tokenFile,
             insteadOf: { [githubUrl]: bareUrl }, initializeEmptyBranch: false,
         }, { timeoutMs: 60000 });
-        assert.strictEqual(r1.connected, true);
+        assert.strictEqual(r1.connected, false, '空仓库尚未引导时连接不能报告已就绪');
         assert.strictEqual(r1.needsRemoteInit, true, '空仓库应报告 needsRemoteInit');
+        assert.strictEqual(r1.remoteEmpty, true, '空仓库应明确报告 remoteEmpty');
 
         // initializeEmptyBranch:true → 普通 push 引导空分支
         const r2 = await worker.runConnect({
@@ -225,6 +226,8 @@ async function childMain() {
             insteadOf: { [githubUrl]: bareUrl }, initializeEmptyBranch: true,
         }, { timeoutMs: 60000 });
         assert.strictEqual(r2.initializedRemote, true, 'bootstrap push 应成功');
+        assert.strictEqual(r2.connected, true, '显式引导完成后才报告连接已就绪');
+        assert.strictEqual(r2.needsRemoteInit, false, '显式引导成功后不再请求初始化');
         // bare 已出现 main 分支
         const refs = mustGit(['--git-dir', bare, 'for-each-ref', '--format=%(refname:short)', 'refs/heads']);
         assert.ok(refs.split('\n').includes(branch), 'bare 应有 main 分支');

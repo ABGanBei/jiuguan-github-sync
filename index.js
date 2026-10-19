@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 酒管 GitHub 同步 · 服务端插件入口（v1.3.0-preview.1 在线 snapshot + 启动期应用）。
+ * 酒管 GitHub 同步 · 服务端插件入口（v1.4.0-preview.1 设置向导 + 启动期应用）。
  *
  * 只导出 info / init / exit（integration-contract.md 后端）：
  * - init(router)：官方只传 router；registerRoutes + 启动期应用（显式安排才应用，fail-closed）。

@@ -128,11 +128,18 @@ function printHelp() {
 
 // ===================== 文件系统校验原语 =====================
 
-/** 判定一个路径（或其祖先）是否为 symlink/junction/reparse point。 */
+/** 判定一个路径（或其祖先）是否为 symlink/junction/reparse point（跟随链接的 stat 与 lstat 不一致）。 */
 function isLink(p) {
     try {
         const st = fs.lstatSync(p);
-        return st.isSymbolicLink();
+        if (st.isSymbolicLink()) return true;
+        // Win32：directory junction 在 lstat 中呈现为「目录」而非符号链接，
+        // 需比较 lstat 与 stat（跟随链接）的 identity 才能识别。
+        if (process.platform === 'win32') {
+            const followed = fs.statSync(p);
+            if (followed.ino !== st.ino || followed.dev !== st.dev || followed.birthtimeMs !== st.birthtimeMs) return true;
+        }
+        return false;
     } catch {
         return false;
     }
@@ -748,6 +755,7 @@ module.exports = {
     runNpmCi,
     locateNpmCli,
     safeMkdirChain,
+    isLink,
     isTokenishName,
     InstallError,
     MIN_NODE_MAJOR,
