@@ -1,69 +1,17 @@
 #!/bin/bash
-# GitHub Data Sync - Installer for SillyTavern
-# Usage: bash install.sh /path/to/SillyTavern
-
+# 酒管 GitHub 同步 · 一次性安装器（薄封装）。
+# 仅把参数原样转交给 Node 实现（bin/install-plugin.js），保证 Windows / Termux 行为一致。
+# 用法: bash install.sh --app-dir /path/to/app [--enable-server-plugins] [--install-deps] [--apply]
 set -e
 
-# 首版为「离线维护 CLI 预览」：禁止原危险安装流程（克隆/安装依赖/写配置），立即失败并提示使用维护 CLI。
-echo "错误：本版本为「离线维护 CLI 预览」，禁止运行原安装流程。"
-echo "请勿通过本脚本安装；聊天数据同步请使用离线维护命令："
-echo "  node bin/reliable-sync.js --help"
-exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE_BIN="$(command -v node || true)"
 
-ST_DIR="${1:-.}"
-
-if [ ! -f "$ST_DIR/server.js" ]; then
-    echo "Error: SillyTavern not found at '$ST_DIR' (server.js missing)"
-    echo "Usage: bash install.sh /path/to/SillyTavern"
+if [ -z "$NODE_BIN" ]; then
+    echo "错误：未找到 node。请先安装 Node.js（>= 20）。" >&2
     exit 1
 fi
 
-PLUGIN_DIR="$ST_DIR/plugins/github-data-sync"
-
-echo "=== GitHub Data Sync Installer ==="
-echo "SillyTavern: $ST_DIR"
-echo "Plugin dir:  $PLUGIN_DIR"
-echo ""
-
-# Clone or update plugin
-if [ -d "$PLUGIN_DIR/.git" ]; then
-    echo "[1/3] Updating existing plugin..."
-    cd "$PLUGIN_DIR"
-    git pull origin main
-else
-    echo "[1/3] Cloning plugin..."
-    rm -rf "$PLUGIN_DIR"
-    git clone https://github.com/JOJO666888888/sillytavern-github-sync.git "$PLUGIN_DIR"
-fi
-
-# Install dependencies
-# 优先用 npm ci：它严格按 package-lock.json 安装，可复现且不会意外升级依赖。
-# 仅在缺少 lock 文件时回退到 npm install。
-echo "[2/3] Installing dependencies..."
-cd "$PLUGIN_DIR"
-if [ -f package-lock.json ]; then
-    npm ci --omit=dev
-else
-    echo "  ⚠ package-lock.json 缺失，回退到 npm install（结果不可复现）"
-    npm install --omit=dev
-fi
-
-# Check config
-echo "[3/3] Checking configuration..."
-CONFIG="$ST_DIR/config.yaml"
-if grep -q "enableServerPlugins: true" "$CONFIG" 2>/dev/null; then
-    echo "  ✓ enableServerPlugins is enabled"
-else
-    echo "  ⚠ enableServerPlugins not set to true in config.yaml"
-    echo "    Add 'enableServerPlugins: true' to $CONFIG"
-fi
-
-echo ""
-echo "=== Installation complete! ==="
-echo ""
-echo "Next steps:"
-echo "1. Restart SillyTavern"
-echo "2. Refresh the browser page (Ctrl+Shift+R)"
-echo "3. Go to Extensions settings > GitHub Data Sync"
-echo "4. Enter your GitHub repo, branch, and token"
-echo "5. Click 'Test Connection' to verify"
+# 原样转交参数，正确引号，避免 shell 拆分/注入。
+# 注：实现位于 bin/install-plugin.js（不是 install.sh 同级的 install-plugin.js）。
+exec "$NODE_BIN" "$SCRIPT_DIR/bin/install-plugin.js" "$@"

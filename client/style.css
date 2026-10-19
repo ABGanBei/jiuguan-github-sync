@@ -1,0 +1,163 @@
+/* 酒管 GitHub 同步 · 前端扩展样式 */
+
+.jg-panel {
+    padding: 8px 12px;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: break-word;
+}
+
+.jg-panel h4 {
+    margin: 0 0 8px 0;
+}
+
+.jg-note {
+    font-size: 12px;
+    color: #999;
+    line-height: 1.5;
+    margin-bottom: 8px;
+    white-space: normal;
+}
+
+.jg-section {
+    margin-bottom: 8px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.jg-section-title {
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: #ccc;
+}
+
+.jg-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+
+.jg-row label {
+    font-size: 13px;
+    color: #ccc;
+    flex-shrink: 0;
+}
+
+.jg-row input.text_pole {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.jg-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.jg-ops button {
+    flex: 1 1 auto;
+    min-width: 84px;
+    white-space: normal;
+    word-break: normal;
+}
+
+.jg-close-row {
+    align-items: flex-start;
+    margin: 8px 0;
+}
+
+.jg-close-row label {
+    flex: 1 1 0;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.jg-status {
+    margin: 6px 0;
+    font-size: 13px;
+}
+
+.jg-status-detail {
+    margin: 6px 0;
+    padding: 8px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.12);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.jg-detail-line {
+    color: #bbb;
+    white-space: normal;
+    word-break: break-word;
+    margin-bottom: 2px;
+}
+
+.jg-staged-list {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+    color: #bbb;
+    word-break: break-all;
+}
+
+.jg-staged-list:empty {
+    display: none;
+}
+
+.jg-status-text.jg-ok { color: #5cb85c; }
+.jg-status-text.jg-warn { color: #f0ad4e; }
+.jg-status-text.jg-info { color: #5bc0de; }
+.jg-status-text.jg-err { color: #d9534f; }
+
+.jg-box {
+    border-radius: 4px;
+    padding: 8px;
+    margin: 6px 0;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.jg-warn-box {
+    background: rgba(240, 173, 78, 0.12);
+    border: 1px solid rgba(240, 173, 78, 0.5);
+    color: #f0ad4e;
+}
+
+.jg-err-box {
+    background: rgba(217, 83, 79, 0.12);
+    border: 1px solid rgba(217, 83, 79, 0.5);
+    color: #d9534f;
+}
+
+.jg-err-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.jg-conflict-list,
+.jg-warn-box ul {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+}
+
+/* 窄屏适配 */
+@media (max-width: 600px) {
+    .jg-panel { padding: 6px 8px; }
+    .jg-row { flex-direction: column; align-items: stretch; }
+    .jg-row label { width: 100%; }
+    .jg-row input.text_pole { flex: 1 1 auto; width: 100%; }
+    .jg-ops { flex-direction: column; }
+    .jg-ops button { width: 100%; }
+    .jg-close-row { flex-direction: row; align-items: flex-start; }
+}

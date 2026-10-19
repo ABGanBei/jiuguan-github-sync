@@ -2,402 +2,154 @@
 
 [中文](README.md) | English
 
-> ⚠️ **【本地离线维护 CLI 预览版】**
->
-> 当前分支提供的是一个**本地离线维护 CLI 预览**，用于在酒管停服状态下对一对一角色聊天记录进行离线维护，
-> **不是**已经安装进真实酒管应用的插件。请勿按本文档下方的「安装」步骤把它装进真实应用。
->
-> 本预览版只做以下事情，且范围严格受限：
->
-> - **仅处理调用者指定的一个用户数据根下的 `chats/**/*.jsonl` 一对一角色聊天记录**，不涉及角色卡、世界书、设置等其他数据。
->   （「一对一角色聊天」指单角色对话正文，群聊正文位于其他目录，首版不包含；不涉及多用户隔离。）
-> - **维护前必须先停止酒管服务，并关闭所有已打开的标签页**。数据文件必须处于无人读写的静止状态，
->   否则离线维护可能读到半写状态或与运行中的进程互相覆盖。
-> - **只有 `status` 命令免离线确认**；`push`、`pull`、`apply`、`recover`、`init` 等改写或推进状态的操作都要求显式声明已离线。
-> - **`pull` 只暂存（stage），不会直接写聊天文件；只有 `apply` 才会真正写入聊天。**
-> - **冲突时保留双方内容，不自动选择**；**删除操作不会传播**（不把删除扩散到本地或远端）。
-> - 本分支上，原有的在线插件 `init` 与 `install.sh` 已被禁用；**自动同步、Termux 环境、GitHub PAT 凭据、
->   UI 连续性、数据加密**等均**尚未验收**，手机端、真实聊天场景、以及网络 GitHub 凭据请勿在生产环境使用。
->
-> 最新用法请参阅 [docs/reliable-sync-usage.md](docs/reliable-sync-usage.md)。
->
-> ---
->
-> 以下为上游仓库的历史内容，仅作为背景保留。
+> This repository ships **two components in one repo**: a frontend extension (the in-app UI) and a server plugin
+> (backend Git and file I/O). Install them into the JiuGuan (酒管) host **separately**. This is the
+> **1.3.0-preview.1 UI-integration preview**: it syncs **one-on-one character chat bodies only** and does
+> **no in-place online apply**. Read this fully, plus [docs/integration-contract.md](docs/integration-contract.md),
+> before using it for real.
 
-Sync SillyTavern data to a private GitHub repository — characters, chats, worlds, settings, and more. Push manually or on a timer. Pull to restore on any device.
+---
 
-## Features
+## What this is
 
-- **Manual push/pull** via slash commands (`/sync-push`, `/sync-pull`, `/sync-status`)
-- **Auto-push** on a configurable interval
-- **Selectable data categories** — sync only what you need
-- **Test connection** button to verify your repo and token
-- **Sync log** — last 100 operations, persisted to disk so they survive a restart
-- **Token security** — the PAT is kept in a `0600` secret file outside the data directory (or in an environment variable); never exposed to the frontend and never written into git config
-- **Auto-update** — plugin updates itself on server restart
-- **Network resilience** — git operations have a timeout and exponential-backoff retry; authentication errors are never retried (retrying them is pointless)
-- **Bounded backups** — identical content is skipped automatically; old backups are pruned by both count and total size
-- **Guards on destructive actions** — restoring a backup takes a safety backup first; force-push requires explicit confirmation
+This sync backs up **one-on-one character chat bodies** to your private GitHub repository and lets you retrieve them
+safely across devices. It is **not** live overwriting sync: a pull only **stages** changes locally, and the real write
+happens during the early window of the next startup — after you have closed every other client and tab.
 
-## Prerequisites
+**First-release limits (please understand)**:
 
-1. A **GitHub repository** (private recommended) for storing your data
-2. A **Personal Access Token** with repo access
+- **One-on-one character chat bodies only** (`chats/**/*.jsonl`). Characters, worlds, group-chat bodies, knowledge,
+  settings, etc. are **not synced**; both ends must have the **same characters** configured or chats won't line up.
+- **No online apply**: there is no "download overwrites my chat now" button; download only stages.
+- **No force push / force pull**: remote or local history is never force-overwritten.
+- **Deletes do not propagate**: deleting a chat on one side does not spread to the other.
+- **Conflicts keep both sides**: nothing is auto-picked; both copies are kept for you to resolve manually.
 
-### Create a GitHub repository
+## Installation (two components)
 
-Create a **private** repository on GitHub (e.g. `my-st-backup`). Leave it empty (no README, no .gitignore).
+Two pieces in one repo, installed separately. **For first install**, `git clone` this repo and `cd` into it first,
+then follow the two steps below.
 
-### Create a Personal Access Token
+### 1. Frontend extension (the in-app UI)
 
-1. Go to [GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens](https://github.com/settings/tokens?type=beta)
-2. Click "Generate new token"
-3. Under "Repository access", select "Only select repositories" and choose your backup repo
-4. Under "Permissions" > "Contents", set to **Read and write**
-5. Generate and copy the token (starts with `github_pat_`)
+In the JiuGuan (酒管) "Extensions" UI, install by **extension URL** and paste this repository's Git URL
+(e.g. `https://github.com/<owner>/<repo>`). The exact entry point depends on your JiuGuan (酒管) version.
+**No real repository URL is provided here** — replace it with the placeholder for the repo you actually cloned/host.
 
-## Important: Server Plugin, NOT a Frontend Extension
+### 2. Server plugin (backend)
 
-This plugin performs Git operations and file I/O on the server side and depends on npm packages like `simple-git`. It **must be installed in the `plugins/` directory**.
-
-**Do NOT use SillyTavern's built-in "Install Extension" feature** — it only handles frontend extensions (`public/scripts/extensions/third-party/`), does not run `npm install`, and does not load into the server plugin system. Installing via that method will have no effect.
-
-Please follow the manual installation steps below.
-
-## Installation
-
-### Step 1: Enable server plugins
-
-In `SillyTavern/config.yaml`, add or set:
-
-```yaml
-enableServerPlugins: true
-```
-
-### Step 2: Install the plugin
+Inside the cloned repo, run the one-shot Node installer to install the plugin into the host's `plugins/` directory
+and enable server plugins:
 
 ```bash
-cd SillyTavern/plugins
-git clone https://github.com/JOJO666888888/sillytavern-github-sync.git github-data-sync
-cd github-data-sync
-npm install
+git clone <repo-url> && cd <repo-dir>
+node bin/install-plugin.js --app-dir <app-dir> --enable-server-plugins --install-deps --apply
 ```
 
-### Step 3: Restart SillyTavern
+- It **defaults to dry-run**: without `--apply` it only prints the exact source/target/config plan and writes nothing.
+  Actual installation requires explicit `--apply`; review the plan **without `--apply` first**, then run with it.
+- `--enable-server-plugins` flips `config.yaml`'s `enableServerPlugins` from `false` to `true` (idempotent).
+- `--install-deps` runs `npm ci --omit=dev` inside the new plugin directory.
+- Runs under Windows PowerShell; Termux support is **design + synthetic path tests only** and is **not yet
+  verified on a real phone** (the installer is pure Node — see "Verification status").
+
+> After installing, **close all old tabs → stop the JiuGuan (酒管) service → restart it → reopen a fresh page**, so the
+> new frontend extension and backend plugin load correctly.
+
+### 3. Configure
+
+In the extension UI:
+
+- **Repository**: `owner/repo`; **Branch**: `main` (or yours).
+- **PAT**: paste a personal access token. The token is **written only** to an isolated secrets store (never to
+  settings/logs/repo/URL/process args); the frontend **never re-fills** a saved token; leaving it blank keeps the
+  existing token unchanged.
+- First-time: you may check **initialize empty branch** — only when explicitly checked does it bootstrap an empty
+  repository with one normal push (**no force**).
+
+### Privacy (read before using)
+
+- **Use a dedicated private data repository**; do not sync chats into any other code/doc repo.
+- **Use a fine-grained PAT** and grant **only this repository's `Contents` read/write** (`Metadata` is implicitly
+  read-only on GitHub — no extra grant needed). You do **not** need organization/account or other-repo scopes, and you
+  should **not** use a classic full-repo-scope token.
+- Confirm the repository is **not protected by a ruleset** that blocks ordinary push (otherwise pushes are rejected).
+- **Private-repo access control ≠ end-to-end encryption**: chats enter Git history in **plaintext**; deleting a file
+  does **not** delete its content from older commits.
+- This version has **no encryption, no history cleanup, and no old-version GUI recovery**; if you need strong privacy
+  or encryption, do not sync real data yet.
+
+## UI actions
+
+| Action | Meaning |
+|--------|---------|
+| Save | Writes repo/branch/auto-check settings and PAT (PAT written only to isolated secrets, never re-filled, blank keeps it) |
+| Connect | Tests repo and token; optionally "initialize empty branch" |
+| Upload saved chats | Pushes already-saved on-disk chats to the remote |
+| Check download | Pulls from remote and **only stages**, never writes chats |
+| Schedule restart-apply | Binds the current stage + target identity/digest, scheduled to apply at next startup; requires **closing all clients and reopening after restart** |
+| Cancel schedule | Clears only the schedule, never deletes staged backups |
+
+**Auto-check** is **off** by default; when on, it only periodically `pull`s and stages — it **never auto-applies**.
+Timers are not guaranteed to run while the app is closed or the phone is asleep.
+
+## Actually applying chats (at restart)
+
+The early startup window is the only safe time to write chats, so a scheduled apply is never "invisible in-place overwrite":
+
+1. In the UI, click **Schedule restart-apply**, confirming you will **close all other clients and old tabs** before restarting.
+2. **Stop the JiuGuan (酒管) service.**
+3. Start JiuGuan (酒管) again; within the official 1.17 `loadPlugins` await window, before `listen`, the plugin verifies the
+   same stage/identity/digest and then writes.
+4. Reopen the browser tab.
+
+If verification fails (stage/identity mismatch, chat already changed, etc.), the plugin keeps the original intent and
+baseline and never rewrites the expectation from current content; a partial write blocks the host from continuing to
+start, avoiding a half-written state.
+
+**Receipt narrow-window limit**: in the crash window after apply has completed (stage/active cleared) but before the
+receipt is persisted, the chat data has actually been written, yet on the next startup the plugin **cannot confirm**
+that apply finished — it keeps the schedule and reports "cannot confirm, may cancel in the UI", and it **never guesses
+success from historical complete records**. This is an intentional product limit (prefer manual confirmation over a
+false success or permanently blocking the whole host).
+
+## Security bounds
+
+- Credentials go through `GIT_ASKPASS`; the PAT never enters config, settings, logs, the repo, URLs, or process args;
+  on Windows it is tightened via a DACL to **current user / SYSTEM / Administrators** (and inherited + other explicit
+  wide-read ACEs are removed) — not "current user only".
+- Git/core run in a dedicated worker that clears inherited token/GIT config/askpass/SSH variables and disables
+  interactivity; storage paths reject symlinks/junctions/escaping.
+- Per-user config, repo, and lock.
+
+## Verification status
+
+- **Verified (official isolated host + synthetic data + local bare)**: on the official 1.17 isolated host (pinned commit
+  `e3f41666c69db032e17e079fcddcf40cf47e8593`), the frontend extension installed its manifest/client over an extension URL
+  from a local Git fixture; the real Node backend installer `--apply --install-deps` enabled and backed up config; the real
+  UI saved a synthetic token then cleared without re-fill, CSRF-connected and bootstrapped a local bare, and pushed; on the
+  other end synthetic main/branch edits were made, pull only staged (disk unchanged); UI scheduled, closed all old tabs,
+  stopped the service, applied before `listen` on restart, a fresh tab loaded the mainline second candidate 2/2, and `/send`
+  appended a user message successfully; a subsequent UI push made the bare remote file **byte-identical** to the host's
+  saved bytes, with `swipes2`/`swipe_id1`/`swipe_info`/`peerNote` all preserved (evidence in the separate verification
+  evidence package `host-continued-evidence.json`, provided by Codex as an evidence ZIP — **not shipped with this source
+  package**); a real chat-manager opened the sync-branch body and `/checkpoint-exit` back to
+  the mainline succeeded (these branch scenarios are scoped to that synthetic main/branch sample only — **not** a claim
+  that every branch scenario is verified). The auto-check timer's backoff and restart-recovery have been verified with a
+  controllable clock.
+- **Not verified**: real-user install, a real phone (Termux on-device), a real GitHub PAT, and the real GitHub bootstrap
+  HTTP-auth push are all **not verified** — do not use in production. Termux support is currently design + synthetic path
+  tests only, not on a real device.
+- **App closed / phone asleep** does not guarantee timers run.
+- This repo does **not** claim to be deployed against real data or published to real GitHub; per-suite pass counts are not
+  hard-coded here — they come from Codex's measured evidence.
+- This repo does **not** claim encryption: tokens are kept in an isolated secrets store and passed via `GIT_ASKPASS`
+  (never in logs/URL/args), but they are not stored encrypted.
+- Windows credentials are tightened via a DACL to current user / SYSTEM / Administrators (SID); no stricter POSIX-style
+  semantics apply.
 
-The plugin auto-deploys its frontend extension on startup. Restart and refresh the page.
+## Source
 
-### Step 4: Configure
-
-1. Open SillyTavern in your browser
-2. Go to **Extensions** settings (puzzle piece icon in top bar)
-3. Find the **GitHub Data Sync** section
-4. Fill in:
-   - **GitHub Repository**: `your-username/your-repo-name`
-   - **Branch**: `main` (or your preferred branch)
-   - **Personal Access Token**: paste your token
-5. Click **Test Connection** to verify
-6. Select which data categories to sync
-7. Optionally enable auto-push
-
-## Usage
-
-### Slash Commands
-
-| Command | Action |
-|---------|--------|
-| `/sync-push` | Push local data to GitHub |
-| `/sync-pull` | Pull latest data from GitHub and restore locally |
-| `/sync-status` | Show current sync status and recent log entries |
-
-### Floating Button
-
-A floating button (bottom-right corner) provides quick access to push, pull, and status.
-
-### Auto-Push
-
-Enable in settings to automatically push at a regular interval (minimum 5 minutes).
-
-### Pull with Confirmation
-
-By default, `/sync-pull` shows a confirmation dialog before overwriting local data. You can disable this in settings.
-
-## Multi-Device Sync Rules
-
-If you have this plugin installed on multiple devices (e.g., desktop, laptop, cloud server) configured with the same GitHub repo, **follow these rules strictly** to avoid data loss or conflicts.
-
-### Hard Rules (Must Follow)
-
-**1. Enable auto-push on only ONE device.** All other devices must have `autoPush` disabled and sync manually. Recommend enabling it on your most frequently used primary device.
-
-**2. Pull when you start, push when you're done.** This is the core workflow for multi-device sync. See below for details.
-
-**3. NEVER edit the same character/chat on two devices simultaneously and push both.** The second push will overwrite the first one's data.
-
-### Daily Workflows
-
-#### Scenario 1: Primary device + secondary device (Recommended)
-
-Primary device (desktop) has `autoPush` enabled at 30-minute intervals. Secondary device (laptop) has auto-push off.
-
-**When using the secondary device:**
-
-```
-Open ST → /sync-pull → use normally → /sync-push → close
-```
-
-That's it. Pull latest, use, push back.
-
-#### Scenario 2: Two devices, both manual
-
-Both devices have `autoPush` off. Everything is manual.
-
-```
-On Device A:
-  Open ST → /sync-pull → use → /sync-push → close
-
-Switch to Device B:
-  Open ST → /sync-pull → use → /sync-push → close
-
-Back to Device A:
-  Open ST → /sync-pull → use → /sync-push → close
-  ...repeat
-```
-
-#### Scenario 3: Always-on server
-
-Server runs 24/7 with `autoPush` enabled. Other devices sync manually.
-
-```
-Laptop:
-  Open ST → /sync-pull → use → /sync-push → close
-
-Phone/Tablet:
-  Open ST → /sync-pull → use → /sync-push → close
-```
-
-The server's auto-push acts as a safety net — even if you forget to push from a secondary device, data was already saved by the server.
-
-### Troubleshooting
-
-| Situation | What to do |
-|-----------|------------|
-| Forgot to push before switching devices | Go back to the original device and push, then pull on the current device |
-| Both devices have modified data | Choose the device whose data you **want to keep**, push from it first, then pull on the other (the other's changes will be lost) |
-| Data looks wrong after pulling | Check the commit history on your GitHub repo to see when and from which device the last push happened |
-| Push rejected (conflict) | Run `/sync-pull` first to merge remote changes, then `/sync-push` |
-| Check current sync state | Use `/sync-status` to view git status and recent sync log |
-
-### Recommended Category Config
-
-| Category | Cross-device sync | Backup only | Not recommended |
-|----------|:--:|:--:|:--:|
-| Characters | ✓ | | |
-| Chats | ✓ | | |
-| Worlds | ✓ | | |
-| Groups | ✓ | | |
-| Settings | | ✓ | |
-| Presets | | ✓ | |
-| Personas | ✓ | | |
-| Backgrounds | | ✓ | |
-| Themes | | ✓ | |
-
-> "Cross-device sync" = keep consistent across devices; "Backup only" = stored on GitHub but not recommended for cross-device overwriting, since different devices may have different preferences.
-
-### A Typical Multi-Device Day
-
-```
-Morning - on laptop:
-  /sync-pull              ← pull last night's desktop changes
-  chat for a while
-  /sync-push              ← push, then shut down
-
-Daytime - on phone (browser):
-  /sync-pull              ← pull morning's laptop chat
-  draw cards, edit world info
-  /sync-push              ← push and close
-
-Evening - on desktop (autoPush on):
-  /sync-pull              ← pull daytime changes
-  continue chatting...
-  (auto-push after 30 min)
-  continue chatting...
-  shutdown               ← autoPush already saved before shutdown
-
-## Data Categories
-
-| Category | Path |
-|----------|------|
-| Characters | `data/default-user/characters/` |
-| Chats | `data/default-user/chats/` |
-| Worlds | `data/default-user/worlds/` |
-| Groups | `data/default-user/groups/` |
-| Settings | `data/default-user/settings.json` |
-| Presets | `data/default-user/OpenAI Settings/` |
-| Personas | `data/default-user/User Avatars/` |
-| Backgrounds | `data/default-user/backgrounds/` |
-| Themes | `data/default-user/themes/` |
-| Extensions | `data/default-user/extensions-backup.json` |
-
-> **About API configuration:** This plugin does **NOT** touch SillyTavern's API settings (e.g., OpenRouter Key, Claude Key, etc.). The plugin's own GitHub Token is automatically stripped before push and preserved locally during pull — it is **never synced to the repository**. If you prefer not to sync other extension settings in `settings.json` across devices, simply uncheck the "Settings" category.
-
-## Security
-
-The token is resolved in this order: environment variable `ST_GITHUB_SYNC_TOKEN` → secret file → legacy config field.
-
-- The secret file lives at `~/.sillytavern-github-sync/<user>.token` with mode `0600`, kept
-  **outside the data directory** — so it is never picked up by sync, backups, or data snapshots
-- On first start, any plaintext token in the config is **migrated automatically** into the secret
-  file and the original field is cleared — **no manual action required**
-- The token is **never** sent to the browser unmasked; all git error messages are redacted first
-- The token is never written into `.git/config`: the remote URL stays clean
-  (`https://github.com/owner/repo.git`) and credentials are supplied through a `GIT_ASKPASS` helper,
-  so they never appear in command-line arguments either
-- The sync repository is stored under `data/default-user/.github-data-sync/`
-
-> **Note:** the secret file is still plaintext — it is simply in a much safer location (outside the
-> data directory) with tighter permissions (`0600`). If your deployment can inject environment
-> variables, prefer `ST_GITHUB_SYNC_TOKEN`, which takes the highest priority.
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Plugin not loading | Check `enableServerPlugins: true` in config.yaml |
-| Settings panel not appearing | Hard refresh browser (Ctrl+Shift+R) |
-| "Authentication failed" | Verify token has `Contents: Read and write` for the correct repo |
-| "Repository not found" | Check repo name format: `username/repo-name` (case-sensitive) |
-| "A sync operation is already in progress" | Wait for the current operation to complete |
-| Large first sync takes long | Normal on first push; subsequent pushes are incremental |
-| Plugin not updating | Check `enableServerPluginsAutoUpdate: true` in config.yaml (server plugins only) |
-| "pre-pull backup failed, aborted" | This is a safety guard: no backup means no overwriting pull. Check free disk space and permissions on `backups/github-sync/` |
-| Conflict panel appears after pull | Expected (conflicts are no longer silently biased to the local side). Resolve each file, and the result is applied to the data directory automatically once all are resolved |
-
-## Changelog
-
-### 2026-09-12
-
-**Security fixes**
-
-- **Path traversal in backup restore/delete** — `backupId` was unvalidated, so a value containing
-  `../` could delete or overwrite arbitrary directories. It must now match a strict
-  second-resolution timestamp pattern and pass a resolved-prefix assertion; invalid input returns 400
-- **The token is no longer written to disk in plaintext** — it moved to a `0600` secret file outside
-  the data directory, is no longer embedded in the `.git/config` remote URL, and no longer appears in
-  command-line arguments (credentials now go through a `GIT_ASKPASS` helper)
-- The `/extensions` endpoint now redacts credentials from returned repository URLs
-
-**Important fixes**
-
-- **Pre-pull auto-backup could fail silently** — the old code returned `null` without logging anything
-  when backups were disabled, and merely logged a warning before proceeding with the overwriting pull
-  when the backup threw. Now a backup **error aborts the pull**, and disabled/no-data cases are logged
-  explicitly instead of staying silent
-- **The client could silently disable auto-backup** — any input change before the settings panel had
-  finished loading wrote back the not-yet-populated checkbox state, permanently turning
-  "backup before pull" off. A load-complete guard was added and the checkbox now defaults to checked
-- **Removed `-X ours` from pull** — it silently biased every conflict toward the local side, discarded
-  remote updates, and made the conflict UI unreachable. Conflicts now surface properly
-- **Pre-pull conflicts during push are no longer swallowed** — the old code ignored all errors, leaving
-  the repo mid-merge and committing conflict markers (`<<<<<<<`) as real content. It now aborts the
-  merge and tells you to resolve conflicts first
-- **Conflict resolution results were never applied locally** — resolving conflicts only committed to the
-  sync repository while the data directory stayed untouched. Results are now applied automatically once
-  every conflict is resolved
-- **Incremental copy was ineffective** — `copyFileIfChanged` compared mtimes but the copy did not
-  preserve timestamps, so the destination mtime was always "now" and every sync re-copied everything
-
-**Other**
-
-- Removed the mistakenly committed `config.yaml` at the repository root (plugin code never read it, and
-  its contents contradicted the README)
-
-**Engineering and robustness**
-
-- **Automated tests added** — `npm test` runs 22 regression assertions (path traversal, backup semantics
-  and sizing, token precedence, environment construction, askpass behaviour, retry classification,
-  migration flow). No network and no running SillyTavern required
-- **GitHub Actions CI added** — syntax check and the full test suite on Node 18 / 20 / 22
-- **package.json metadata completed** — `license`, `engines`, `repository`, `scripts`; version unified at 1.1.0
-- **Git timeout and retry** — a stalled network used to hang a sync indefinitely. There is now a 3-minute
-  timeout plus exponential-backoff retry (up to 3 attempts), while authentication/permission errors fail
-  immediately instead of being retried pointlessly
-- **Backup size governance** — a single backup measured up to 359 MB, and the old code only pruned by count
-  (5 backups ≈ 1.8 GB). A total-size cap was added (default 2048 MB, tunable via
-  `autoBackup.maxTotalSizeMB`), and at least one backup is always retained
-- **Backup de-duplication** — when the content fingerprint matches the newest backup the copy is skipped
-  entirely, so a pre-pull backup no longer re-copies hundreds of MB when nothing changed
-- **Concurrency guards completed** — backup create/restore/delete and extensions-backup writes now
-  participate in the operation lock, so they can no longer interleave with a push/pull and leave a
-  half-mixed data directory
-- **Guards on destructive actions** — restoring a backup takes a safety backup first (and aborts the
-  restore if that fails); force-push requires an explicit `confirm: true`, so a stray click can no longer
-  discard remote history
-- **Log persistence** — went from "in-memory, 10 entries" to 100 entries written to disk, so post-mortem
-  debugging survives a restart
-- **Installer now uses `npm ci`** — installs from `package-lock.json`, so results are reproducible
-- **README corrected against the implementation** — the real paths for presets and personas are
-  `OpenAI Settings/` and `User Avatars/` (the README had been listing the non-existent `presets/` and
-  `personas/`), and the category table was missing the extensions entry
-- **Removed the stale internal document** `OPTIMIZATION.md`
-- `copyDirIfChanged` now skips deletion when the source directory is empty but the target is not, to avoid
-  wiping a repository copy by mistake
-- Frontend `escapeHtml` now escapes single quotes as well
-
-**Upgrade notes**
-
-- **No manual action required**: the token migration happens automatically when the plugin starts
-- If your token was previously stored in plaintext in `github-data-sync-config.json`, or appeared in the
-  sync repository's `.git/config`, consider revoking it on GitHub and generating a new one
-
-### 2026-06-17
-
-**New Features**
-- **Extension path backup** — Scan installed third-party extensions, extract Git URLs, save as JSON synced to cloud
-- **One-click install missing extensions** — Compare cloud backup with local, auto-install missing extensions
-- **View cloud backup list** — View the synced extension list in the UI
-- **Generate backup and push** — One-click scan local extensions and push to GitHub
-- **Git anti-hang** — Set `GIT_TERMINAL_PROMPT=0` so invalid tokens fail immediately instead of waiting for password
-
-**Fixes**
-- Fix presets path mapping (pointed to nonexistent `presets/`, now `OpenAI Settings/`)
-- Fix personas path mapping (pointed to nonexistent `personas/`, now `User Avatars/`)
-- Fix local scan overwriting cloud backup file
-- Extension panel button text color set to black for readability
-
-### 2026-06-14
-
-**New Features**
-- **Dual pull modes** — New "Pull Mode" setting:
-  - **Merge mode** (default): Attempts to merge remote and local data; shows a visual conflict resolver if conflicts arise
-  - **Overwrite mode**: Auto-backs up before pull, overwrites local with remote files, never produces conflicts
-- **Conflict resolution center** — When merge mode detects conflicts, a visual panel appears:
-  - Per-file options: "Keep Local", "Keep Remote", "Manual Edit"
-  - Manual editor with JSON validation to prevent corrupted data
-  - Global actions: Keep All Local (force push) / Keep All Remote
-- **Backup refresh button** — Manual refresh for the backup list
-- **Multi-user isolation** — Supports SillyTavern multi-character login with per-user configs and data
-
-**Fixes**
-- Fix clone failure for empty repos (no branches)
-- Fix false positives in conflict marker detection (`=======` in normal content was flagged as conflict)
-- Fix "Forbidden" error when editing conflict files manually
-- Slash commands now load via dynamic import to prevent plugin failure from incompatible module paths
-
-### 2026-06-05
-
-- Fix config persistence (migrate from extension_settings to standalone file)
-- Fix masked token overwriting real token on save
-- Add push/pull progress tracking
-- Add auto-backup before pull
-
-## Updating
-
-The plugin auto-updates on server restart. To update manually:
-
-```bash
-cd SillyTavern/plugins/github-data-sync
-git pull origin main
-npm install
-```
+Based on [JOJO666888888/sillytavern-github-sync](https://github.com/JOJO666888888/sillytavern-github-sync)
+(MIT License, author retained). This repo adds a "reliable sync core" and a "1.17 UI integration" on top; the original
+body is retained here only as source and MIT attribution.

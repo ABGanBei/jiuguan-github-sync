@@ -16,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        # engines 要求 Node >= 20（官方 1.17 依赖）；Node 18 已不再受支持，故矩阵仅 [20, 22]。
+        node-version: [20, 22]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,17 +31,20 @@ jobs:
       - name: Install dependencies
         run: npm ci --omit=dev
 
-      - name: Syntax check
+      # 三项语法检查（核心 / reliable / integration）。
+      - name: Syntax check (core)
         run: npm run check
 
-      - name: Run tests
-        run: npm test
-
-      - name: Reliable sync syntax check
+      - name: Syntax check (reliable)
         run: npm run check:reliable
 
-      - name: Reliable sync tests
-        run: npm run test:reliable
+      - name: Syntax check (integration)
+        run: npm run check:integration
+
+      # npm test = test:reliable + test:integration（正式门禁测试），一次跑完，不再重复分 suite。
+      # test:legacy（node test/run.js）是遗留基线，引用已被移除的旧 index exports，非门禁、不纳入 CI。
+      - name: Run tests
+        run: npm test
 
   reliable-windows:
     name: Reliable (Windows)
@@ -63,3 +67,25 @@ jobs:
 
       - name: Reliable sync tests
         run: npm run test:reliable
+
+  integration-windows:
+    name: Integration (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Integration syntax check
+        run: npm run check:integration
+
+      - name: Integration tests
+        run: npm run test:integration
