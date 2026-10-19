@@ -2,6 +2,8 @@
 
 [English](README_EN.md) | 中文
 
+**第一次用？先看 [新手使用说明：照着做就能用](docs/quickstart.md)。**
+
 > 本仓库是**同仓库双组件**：一个前端扩展（酒管界面集成）+ 一个服务端插件（后台 Git 与文件操作）。
 > 两者需分别安装到酒管宿主。当前为 **1.3.0-preview.1 界面集成预览**，仅支持**一对一角色聊天正文**的同步，
 > 且**不做在线原位 apply**。请在真实使用前完整阅读本说明与 [docs/integration-contract.md](docs/integration-contract.md)。
